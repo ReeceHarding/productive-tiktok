@@ -53,6 +53,7 @@ class CreateUsernameVC: UIViewController, UITextFieldDelegate {
     fileprivate lazy var usernameTextField: UITextField = {
         let tf = UITextField()
         tf.tintColor = tikTokRed
+        tf.textColor = .black
         tf.attributedPlaceholder = NSAttributedString(string: "Username", attributes: [
             .foregroundColor: UIColor.lightGray,
             .font: avenirRomanFont(size: 14.5)

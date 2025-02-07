@@ -438,7 +438,7 @@ class CreatePostVC: UIViewController {
        
         
         view.addSubview(cancelButton)
-        cancelButton.anchor(top: view.topAnchor, leading: view.leadingAnchor, bottom: nil, trailing: nil, padding: .init(top: 30, left: 12, bottom: 0, right: 0), size: .init(width: 30, height: 30))
+        cancelButton.anchor(top: view.safeAreaLayoutGuide.topAnchor, leading: view.leadingAnchor, bottom: nil, trailing: nil, padding: .init(top: 12, left: 12, bottom: 0, right: 0), size: .init(width: 30, height: 30))
         
         
         view.addSubview(recordingTimeLabel)
@@ -505,7 +505,7 @@ class CreatePostVC: UIViewController {
         
         
         view.addSubview(revertCameraDirectionButton)
-        revertCameraDirectionButton.anchor(top: cancelButton.topAnchor, leading: nil, bottom: nil, trailing: view.trailingAnchor, padding: .init(top: 0, left: 0, bottom: 0, right: 12))
+        revertCameraDirectionButton.anchor(top: view.safeAreaLayoutGuide.topAnchor, leading: nil, bottom: nil, trailing: view.trailingAnchor, padding: .init(top: 12, left: 0, bottom: 0, right: 12))
         
         
        

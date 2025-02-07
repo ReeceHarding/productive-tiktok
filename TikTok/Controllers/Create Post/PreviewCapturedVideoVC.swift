@@ -571,11 +571,11 @@ class PreviewCapturedVideoVC: UIViewController, UIGestureRecognizerDelegate {
         thumbbnailImageView.fillSuperview()
         
         view.addSubview(cancelButton)
-        cancelButton.anchor(top: view.topAnchor, leading: view.leadingAnchor, bottom: nil, trailing: nil, padding: .init(top: 30, left: 12, bottom: 0, right: 0), size: .init(width: buttonsDimension, height: buttonsDimension))
+        cancelButton.anchor(top: view.safeAreaLayoutGuide.topAnchor, leading: view.leadingAnchor, bottom: nil, trailing: nil, padding: .init(top: 12, left: 12, bottom: 0, right: 0), size: .init(width: buttonsDimension, height: buttonsDimension))
         
         
         view.addSubview(filterButton)
-        filterButton.anchor(top: view.topAnchor, leading: nil, bottom: nil, trailing: view.trailingAnchor, padding: .init(top: 30, left: 0, bottom: 0, right: buttonsRightPadding), size: .init(width: buttonsDimension, height: buttonsDimension))
+        filterButton.anchor(top: view.safeAreaLayoutGuide.topAnchor, leading: nil, bottom: nil, trailing: view.trailingAnchor, padding: .init(top: 12, left: 0, bottom: 0, right: buttonsRightPadding), size: .init(width: buttonsDimension, height: buttonsDimension))
                
         view.addSubview(adjustClipsButton)
        adjustClipsButton.anchor(top: filterButton.bottomAnchor, leading: nil, bottom: nil, trailing: view.trailingAnchor, padding: .init(top: 38, left: 0, bottom: 0, right: buttonsRightPadding), size: .init(width: buttonsDimension, height: buttonsDimension))

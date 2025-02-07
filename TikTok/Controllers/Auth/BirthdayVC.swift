@@ -18,6 +18,7 @@ class BirthdayVC: UIViewController {
         handleSetUpNavItems()
         setUpViews()
         handleSetUpAttributedStrings()
+        setupGestureRecognizers()
     }
     
     
@@ -46,6 +47,7 @@ class BirthdayVC: UIViewController {
         label.text = "Birthday"
         label.font = avenirRomanFont(size: 14.5)
         label.translatesAutoresizingMaskIntoConstraints = false
+        label.isUserInteractionEnabled = true
         return label
     }()
     
@@ -77,9 +79,11 @@ class BirthdayVC: UIViewController {
         datePicker.addTarget(self, action: #selector(handleDatePicker), for: .valueChanged)
         if #available(iOS 13.4, *) {
             datePicker.preferredDatePickerStyle = .wheels
-        } else {
-            // Fallback on earlier versions
         }
+        datePicker.backgroundColor = .white
+        datePicker.maximumDate = Date()
+        datePicker.minimumDate = Calendar.current.date(byAdding: .year, value: -100, to: Date())
+        datePicker.isHidden = true
         return datePicker
     }()
     
@@ -108,7 +112,7 @@ class BirthdayVC: UIViewController {
         nextButton.anchor(top: lineSeperatorView.bottomAnchor, leading: lineSeperatorView.leadingAnchor, bottom: nil, trailing: lineSeperatorView.trailingAnchor, padding: .init(top: 25, left: 0, bottom: 0, right: 0), size: .init(width: 0, height: 45))
         
         view.addSubview(datePicker)
-        datePicker.anchor(top: nil, leading: lineSeperatorView.leadingAnchor, bottom: view.safeAreaLayoutGuide.bottomAnchor, trailing: lineSeperatorView.trailingAnchor, padding: .init(top: 0, left: 0, bottom: 40, right: 0))
+        datePicker.anchor(top: nextButton.bottomAnchor, leading: view.leadingAnchor, bottom: view.safeAreaLayoutGuide.bottomAnchor, trailing: view.trailingAnchor, padding: .init(top: 20, left: 30, bottom: 20, right: 30), size: .init(width: 0, height: 200))
         
         
     }
@@ -141,14 +145,25 @@ class BirthdayVC: UIViewController {
     
     //MARK: - Target Selectors
     
-
+    fileprivate func setupGestureRecognizers() {
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleBirthdayLabelTapped))
+        selectedBirthdayLabel.addGestureRecognizer(tapGesture)
+    }
+    
+    @objc fileprivate func handleBirthdayLabelTapped() {
+        datePicker.isHidden = !datePicker.isHidden
+        if !datePicker.isHidden {
+            handleDatePicker(sender: datePicker)
+        }
+    }
+    
     @objc fileprivate func handleDatePicker(sender: UIDatePicker) {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "dd MMM yyyy"
         selectedBirthdayLabel.text = dateFormatter.string(from: sender.date)
         selectedDate = sender.date
+        selectedBirthdayLabel.textColor = .black
     }
-    
     
     @objc fileprivate func handleDidSelectNextButton() {
         let enterEmailVC = EnterEmailVC(birthdate: datePicker.date)

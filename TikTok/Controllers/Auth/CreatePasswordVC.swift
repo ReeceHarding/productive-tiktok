@@ -51,6 +51,7 @@ class CreatePasswordVC: UIViewController, UITextFieldDelegate {
     fileprivate lazy var passwordTextField: UITextField = {
         let tf = UITextField()
         tf.tintColor = tikTokRed
+        tf.textColor = .black
         tf.attributedPlaceholder = NSAttributedString(string: "Enter Password", attributes: [
             .foregroundColor: UIColor.lightGray,
             .font: avenirRomanFont(size: 14.5)
@@ -134,14 +135,6 @@ class CreatePasswordVC: UIViewController, UITextFieldDelegate {
     
     
     
-    fileprivate let captchaVerificationView: CaptchaVerificationView = {
-        let captchaVerificationView = CaptchaVerificationView()
-        return captchaVerificationView
-    }()
-    
-    
-    
-    
     //MARK: - Handlers
     fileprivate func handleSetUpNavItems() {
         navigationItem.title = "Sign up"
@@ -187,16 +180,6 @@ class CreatePasswordVC: UIViewController, UITextFieldDelegate {
         
         view.addSubview(nextButton)
         nextButton.anchor(top: secondIcon.bottomAnchor, leading: lineSeperatorView.leadingAnchor, bottom: nil, trailing: lineSeperatorView.trailingAnchor, padding: .init(top: 35, left: 0, bottom: 0, right: 0), size: .init(width: 0, height: 45))
-               
-        
-        let blackview = UIView()
-        blackview.backgroundColor = UIColor.black.withAlphaComponent(0.8)
-        view.addSubview(blackview)
-        blackview.fillSuperview()
-        view.addSubview(captchaVerificationView)
-        let spacing: CGFloat = view.frame.width * 0.12
-        captchaVerificationView.centerInSuperview(size: .init(width: view.frame.width - spacing, height: view.frame.width - spacing))
-//
     }
     
     

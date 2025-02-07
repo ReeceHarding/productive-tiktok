@@ -57,6 +57,7 @@ class SignInVC: UIViewController, UITextFieldDelegate {
     fileprivate lazy var emailTextField: UITextField = {
         let tf = UITextField()
         tf.tintColor = tikTokRed
+        tf.textColor = .black
         tf.attributedPlaceholder = NSAttributedString(string: "Email Address", attributes: [
             .foregroundColor: UIColor.lightGray,
             .font: avenirRomanFont(size: 14.5)
@@ -72,6 +73,7 @@ class SignInVC: UIViewController, UITextFieldDelegate {
     fileprivate lazy var passwordTextField: UITextField = {
         let tf = UITextField()
         tf.tintColor = tikTokRed
+        tf.textColor = .black
         tf.attributedPlaceholder = NSAttributedString(string: "Password", attributes: [
             .foregroundColor: UIColor.lightGray,
             .font: avenirRomanFont(size: 14.5)

@@ -14,15 +14,18 @@
  * limitations under the License.
  */
 
-#import "GDTCORLibrary/Private/GDTCORTransformer.h"
-#import "GDTCORLibrary/Private/GDTCORTransformer_Private.h"
+#import "GoogleDataTransport/GDTCORLibrary/Private/GDTCORTransformer.h"
+#import "GoogleDataTransport/GDTCORLibrary/Private/GDTCORTransformer_Private.h"
 
-#import <GoogleDataTransport/GDTCORAssert.h>
-#import <GoogleDataTransport/GDTCORConsoleLogger.h>
-#import <GoogleDataTransport/GDTCOREventTransformer.h>
-#import <GoogleDataTransport/GDTCORLifecycle.h>
+#import "GoogleDataTransport/GDTCORLibrary/Internal/GDTCORAssert.h"
+#import "GoogleDataTransport/GDTCORLibrary/Internal/GDTCORLifecycle.h"
+#import "GoogleDataTransport/GDTCORLibrary/Internal/GDTCORStorageProtocol.h"
+#import "GoogleDataTransport/GDTCORLibrary/Public/GoogleDataTransport/GDTCORConsoleLogger.h"
+#import "GoogleDataTransport/GDTCORLibrary/Public/GoogleDataTransport/GDTCOREvent.h"
+#import "GoogleDataTransport/GDTCORLibrary/Public/GoogleDataTransport/GDTCOREventTransformer.h"
 
-#import "GDTCORLibrary/Private/GDTCORStorage.h"
+#import "GoogleDataTransport/GDTCORLibrary/Private/GDTCOREvent_Private.h"
+#import "GoogleDataTransport/GDTCORLibrary/Private/GDTCORRegistrar_Private.h"
 
 @implementation GDTCORTransformer
 
@@ -36,54 +39,70 @@
 }
 
 - (instancetype)init {
+  return [self initWithApplication:[GDTCORApplication sharedApplication]];
+}
+
+- (instancetype)initWithApplication:(id<GDTCORApplicationProtocol>)application {
   self = [super init];
   if (self) {
     _eventWritingQueue =
         dispatch_queue_create("com.google.GDTCORTransformer", DISPATCH_QUEUE_SERIAL);
-    _storageInstance = [GDTCORStorage sharedInstance];
+    _application = application;
   }
   return self;
 }
 
 - (void)transformEvent:(GDTCOREvent *)event
-      withTransformers:(NSArray<id<GDTCOREventTransformer>> *)transformers {
+      withTransformers:(NSArray<id<GDTCOREventTransformer>> *)transformers
+            onComplete:(void (^_Nullable)(BOOL wasWritten, NSError *_Nullable error))completion {
   GDTCORAssert(event, @"You can't write a nil event");
 
   __block GDTCORBackgroundIdentifier bgID = GDTCORBackgroundIdentifierInvalid;
-  bgID = [[GDTCORApplication sharedApplication]
-      beginBackgroundTaskWithName:@"GDTTransformer"
-                expirationHandler:^{
-                  [[GDTCORApplication sharedApplication] endBackgroundTask:bgID];
-                  bgID = GDTCORBackgroundIdentifierInvalid;
-                }];
+  __auto_type __weak weakApplication = self.application;
+  bgID = [self.application beginBackgroundTaskWithName:@"GDTTransformer"
+                                     expirationHandler:^{
+                                       [weakApplication endBackgroundTask:bgID];
+                                       bgID = GDTCORBackgroundIdentifierInvalid;
+                                     }];
+
+  __auto_type completionWrapper = ^(BOOL wasWritten, NSError *_Nullable error) {
+    if (completion) {
+      completion(wasWritten, error);
+    }
+
+    if (bgID != GDTCORBackgroundIdentifierInvalid) {
+      // The work is done, cancel the background task if it's valid.
+      [weakApplication endBackgroundTask:bgID];
+    } else {
+      GDTCORLog(GDTCORMCDDebugLog, GDTCORLoggingLevelWarnings,
+                @"Attempted to cancel invalid background task in GDTCORTransformer.");
+    }
+    bgID = GDTCORBackgroundIdentifierInvalid;
+  };
+
   dispatch_async(_eventWritingQueue, ^{
     GDTCOREvent *transformedEvent = event;
     for (id<GDTCOREventTransformer> transformer in transformers) {
-      if ([transformer respondsToSelector:@selector(transform:)]) {
-        transformedEvent = [transformer transform:transformedEvent];
+      if ([transformer respondsToSelector:@selector(transformGDTEvent:)]) {
+        GDTCORLogDebug(@"Applying a transformer to event %@", event);
+        transformedEvent = [transformer transformGDTEvent:event];
         if (!transformedEvent) {
+          completionWrapper(NO, nil);
           return;
         }
       } else {
         GDTCORLogError(GDTCORMCETransformerDoesntImplementTransform,
-                       @"Transformer doesn't implement transform: %@", transformer);
+                       @"Transformer doesn't implement transformGDTEvent: %@", transformer);
+        completionWrapper(NO, nil);
         return;
       }
     }
-    [self.storageInstance storeEvent:transformedEvent];
 
-    // The work is done, cancel the background task if it's valid.
-    [[GDTCORApplication sharedApplication] endBackgroundTask:bgID];
-    bgID = GDTCORBackgroundIdentifierInvalid;
+    id<GDTCORStorageProtocol> storage =
+        [GDTCORRegistrar sharedInstance].targetToStorage[@(event.target)];
+
+    [storage storeEvent:transformedEvent onComplete:completionWrapper];
   });
-}
-
-#pragma mark - GDTCORLifecycleProtocol
-
-- (void)appWillTerminate:(GDTCORApplication *)application {
-  // Flush the queue immediately.
-  dispatch_sync(_eventWritingQueue, ^{
-                });
 }
 
 @end
