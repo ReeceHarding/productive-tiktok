@@ -6,16 +6,51 @@
 //
 
 import SwiftUI
+import FirebaseAuth
 
 struct ContentView: View {
+    @StateObject private var authManager = AuthenticationManager.shared
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Group {
+            if authManager.isAuthenticated {
+                NavigationView {
+                    VStack {
+                        Text("Welcome! You're signed in.")
+                            .font(.title)
+                            .padding()
+                        
+                        // Add your main app content here
+                        
+                        Spacer()
+                    }
+                    .navigationTitle("Home")
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            VideoUploadButton()
+                        }
+                        
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button(action: signOut) {
+                                Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                            }
+                        }
+                    }
+                }
+            } else {
+                SignInView()
+            }
         }
-        .padding()
+    }
+    
+    private func signOut() {
+        Task {
+            do {
+                try Auth.auth().signOut()
+            } catch {
+                print("❌ Error signing out: \(error.localizedDescription)")
+            }
+        }
     }
 }
 
