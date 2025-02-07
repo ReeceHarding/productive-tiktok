@@ -25,6 +25,11 @@ struct ContentView: View {
                             Label("Second Brain", systemImage: "brain.head.profile")
                         }
                     
+                    VideoUploadButton()
+                        .tabItem {
+                            Label("Upload", systemImage: "video.badge.plus")
+                        }
+                    
                     Text("Calendar")
                         .tabItem {
                             Label("Calendar", systemImage: "calendar")
@@ -36,10 +41,6 @@ struct ContentView: View {
                         }
                 }
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        VideoUploadButton()
-                    }
-                    
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: signOut) {
                             Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
