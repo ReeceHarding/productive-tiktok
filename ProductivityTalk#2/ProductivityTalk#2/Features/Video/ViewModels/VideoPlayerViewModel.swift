@@ -91,8 +91,15 @@ class VideoPlayerViewModel: ObservableObject {
         
         Task {
             do {
-                try await firestore.runTransaction { transaction, _ in
-                    let videoDoc = try transaction.getDocument(videoRef)
+                try await firestore.runTransaction({ (transaction, errorPointer) -> Any? in
+                    let videoDoc: DocumentSnapshot
+                    do {
+                        videoDoc = try transaction.getDocument(videoRef)
+                    } catch let fetchError as NSError {
+                        errorPointer?.pointee = fetchError
+                        return nil
+                    }
+                    
                     let currentLikes = videoDoc.data()?["likeCount"] as? Int ?? 0
                     
                     if self.isLiked {
@@ -106,7 +113,9 @@ class VideoPlayerViewModel: ObservableObject {
                         transaction.updateData(["likeCount": currentLikes + 1], forDocument: videoRef)
                         print("👍 VideoPlayer: Added like")
                     }
-                }
+                    
+                    return nil
+                })
                 
                 // Update UI
                 isLiked.toggle()
@@ -131,8 +140,15 @@ class VideoPlayerViewModel: ObservableObject {
         
         Task {
             do {
-                try await firestore.runTransaction { transaction, _ in
-                    let videoDoc = try transaction.getDocument(videoRef)
+                try await firestore.runTransaction({ (transaction, errorPointer) -> Any? in
+                    let videoDoc: DocumentSnapshot
+                    do {
+                        videoDoc = try transaction.getDocument(videoRef)
+                    } catch let fetchError as NSError {
+                        errorPointer?.pointee = fetchError
+                        return nil
+                    }
+                    
                     let currentSaves = videoDoc.data()?["saveCount"] as? Int ?? 0
                     
                     if self.isSaved {
@@ -146,7 +162,9 @@ class VideoPlayerViewModel: ObservableObject {
                         transaction.updateData(["saveCount": currentSaves + 1], forDocument: videoRef)
                         print("💾 VideoPlayer: Added to saved")
                     }
-                }
+                    
+                    return nil
+                })
                 
                 // Update UI
                 isSaved.toggle()

@@ -95,6 +95,7 @@ exports.processVideo = onObjectFinalized({
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           ...formData.getHeaders(),
         },
+        maxBodyLength: Infinity,
       },
     );
 
@@ -127,6 +128,7 @@ exports.processVideo = onObjectFinalized({
             Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
             "Content-Type": "application/json",
           },
+          maxBodyLength: Infinity,
         },
       );
 

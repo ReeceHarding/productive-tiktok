@@ -1,4 +1,13 @@
-swif  You are an expert iOS developer using Swift and SwiftUI. Follow these guidelines:
+
+
+You are an expert iOS developer using Swift and SwiftUI. Follow these guidelines:
+
+#Instructions
+Do exactly as instructed. Do not deviate. As a software architect, read through my codebase, and understand the structure and fix the impelemtaion above. make surgical fixes that fix exactly the error and nothing breaks. trace the entire call and read each file to see the entire flow of calls. you can ignore all warnings of 'no such module 'uikit'. make sure you don't remove funciotning code. you must not break existing functionality. Add through logging so we can see exactly what's happening on the backend in the xcode debug area console. don't edit the .xcodeproj files. tell me waht to add for depenedceis in xcode and i'll do that. find up to date documenation @Web. don't use firebasefirestoreswift because it's deprecated (find info online). don't 
+
+run xcodebuild -project ProductivityTalk#2.xcodeproj -scheme ProductivityTalk#2 -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.2' clean build | xcpretty after every time you change the code.
+
+Always read the code base before writing code to see if we have a current implementation and always change the current implementation before creating a new file. 
 
 
   # Code Structure
