@@ -14,26 +14,35 @@ struct ContentView: View {
     var body: some View {
         Group {
             if authManager.isAuthenticated {
-                NavigationView {
-                    VStack {
-                        Text("Welcome! You're signed in.")
-                            .font(.title)
-                            .padding()
-                        
-                        // Add your main app content here
-                        
-                        Spacer()
-                    }
-                    .navigationTitle("Home")
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            VideoUploadButton()
+                TabView {
+                    VideoFeedView()
+                        .tabItem {
+                            Label("For You", systemImage: "play.circle.fill")
                         }
-                        
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button(action: signOut) {
-                                Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
-                            }
+                    
+                    Text("Second Brain")
+                        .tabItem {
+                            Label("Second Brain", systemImage: "brain.head.profile")
+                        }
+                    
+                    Text("Calendar")
+                        .tabItem {
+                            Label("Calendar", systemImage: "calendar")
+                        }
+                    
+                    Text("Profile")
+                        .tabItem {
+                            Label("Profile", systemImage: "person.circle")
+                        }
+                }
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        VideoUploadButton()
+                    }
+                    
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: signOut) {
+                            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                         }
                     }
                 }

@@ -1,6 +1,15 @@
 import Foundation
 import FirebaseFirestore
 
+enum VideoProcessingStatus: String, Codable {
+    case uploading = "uploading"
+    case processing = "processing"
+    case transcribing = "transcribing"
+    case extracting_quotes = "extracting_quotes"
+    case ready = "ready"
+    case error = "error"
+}
+
 struct Video: Identifiable, Codable {
     let id: String
     let ownerId: String
@@ -12,6 +21,9 @@ struct Video: Identifiable, Codable {
     let createdAt: Date
     var likeCount: Int
     var saveCount: Int
+    var processingStatus: VideoProcessingStatus
+    var transcript: String?
+    var extractedQuotes: [String]?
     
     // Additional metadata for UI
     var ownerUsername: String
@@ -30,6 +42,9 @@ struct Video: Identifiable, Codable {
         case saveCount
         case ownerUsername
         case ownerProfilePicURL
+        case processingStatus
+        case transcript
+        case extractedQuotes
     }
     
     // Initialize from Firestore document
@@ -47,7 +62,9 @@ struct Video: Identifiable, Codable {
               let tags = data["tags"] as? [String],
               let description = data["description"] as? String,
               let createdAt = (data["createdAt"] as? Timestamp)?.dateValue(),
-              let ownerUsername = data["ownerUsername"] as? String else {
+              let ownerUsername = data["ownerUsername"] as? String,
+              let processingStatusRaw = data["processingStatus"] as? String,
+              let processingStatus = VideoProcessingStatus(rawValue: processingStatusRaw) else {
             print("❌ Video: Failed to initialize - Missing required fields")
             return nil
         }
@@ -63,6 +80,9 @@ struct Video: Identifiable, Codable {
         self.saveCount = (data["saveCount"] as? Int) ?? 0
         self.ownerUsername = ownerUsername
         self.ownerProfilePicURL = data["ownerProfilePicURL"] as? String
+        self.processingStatus = processingStatus
+        self.transcript = data["transcript"] as? String
+        self.extractedQuotes = data["extractedQuotes"] as? [String]
         
         print("✅ Video: Successfully initialized video with ID: \(id)")
     }
@@ -71,6 +91,7 @@ struct Video: Identifiable, Codable {
     init(id: String, ownerId: String, videoURL: String, thumbnailURL: String, 
          title: String, tags: [String], description: String, ownerUsername: String,
          ownerProfilePicURL: String? = nil) {
+        
         self.id = id
         self.ownerId = ownerId
         self.videoURL = videoURL
@@ -83,6 +104,9 @@ struct Video: Identifiable, Codable {
         self.saveCount = 0
         self.ownerUsername = ownerUsername
         self.ownerProfilePicURL = ownerProfilePicURL
+        self.processingStatus = .uploading
+        self.transcript = nil
+        self.extractedQuotes = nil
         
         print("✅ Video: Created new video with ID: \(id)")
     }
@@ -99,11 +123,20 @@ struct Video: Identifiable, Codable {
             "createdAt": Timestamp(date: createdAt),
             "likeCount": likeCount,
             "saveCount": saveCount,
-            "ownerUsername": ownerUsername
+            "ownerUsername": ownerUsername,
+            "processingStatus": processingStatus.rawValue
         ]
         
         if let ownerProfilePicURL = ownerProfilePicURL {
             data["ownerProfilePicURL"] = ownerProfilePicURL
+        }
+        
+        if let transcript = transcript {
+            data["transcript"] = transcript
+        }
+        
+        if let extractedQuotes = extractedQuotes {
+            data["extractedQuotes"] = extractedQuotes
         }
         
         print("✅ Video: Converted video data to Firestore format")
