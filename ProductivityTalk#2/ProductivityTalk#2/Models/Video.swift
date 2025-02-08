@@ -22,6 +22,7 @@ public struct Video: Identifiable, Codable {
     public var processingStatus: VideoProcessingStatus
     public var transcript: String?
     public var extractedQuotes: [String]?
+    public var quotes: [String]?
     public var autoTitle: String?
     public var autoDescription: String?
     public var autoTags: [String]?
@@ -47,6 +48,7 @@ public struct Video: Identifiable, Codable {
         case processingStatus
         case transcript
         case extractedQuotes
+        case quotes
         case autoTitle
         case autoDescription
         case autoTags
@@ -58,6 +60,9 @@ public struct Video: Identifiable, Codable {
             LoggingService.error("Failed to initialize - No data in document", component: "Video")
             return nil
         }
+        
+        LoggingService.debug("🎥 Video: Processing document \(document.documentID)", component: "Video")
+        LoggingService.debug("📄 Document data: \(data)", component: "Video")
         
         self.id = document.documentID
         guard let ownerId = data["ownerId"] as? String,
@@ -88,7 +93,26 @@ public struct Video: Identifiable, Codable {
         self.ownerProfilePicURL = data["ownerProfilePicURL"] as? String
         self.processingStatus = processingStatus
         self.transcript = data["transcript"] as? String
-        self.extractedQuotes = data["extractedQuotes"] as? [String]
+        
+        // Log quote loading
+        if let quotes = data["quotes"] as? [String] {
+            LoggingService.debug("📝 Video: Found \(quotes.count) quotes in 'quotes' field", component: "Video")
+            LoggingService.debug("   Quotes: \(quotes)", component: "Video")
+            self.quotes = quotes
+        } else {
+            LoggingService.debug("⚠️ Video: No quotes found in 'quotes' field", component: "Video")
+            self.quotes = nil
+        }
+        
+        if let extractedQuotes = data["extractedQuotes"] as? [String] {
+            LoggingService.debug("📝 Video: Found \(extractedQuotes.count) quotes in 'extractedQuotes' field", component: "Video")
+            LoggingService.debug("   Extracted Quotes: \(extractedQuotes)", component: "Video")
+            self.extractedQuotes = extractedQuotes
+        } else {
+            LoggingService.debug("⚠️ Video: No quotes found in 'extractedQuotes' field", component: "Video")
+            self.extractedQuotes = nil
+        }
+        
         self.autoTitle = data["autoTitle"] as? String
         self.autoDescription = data["autoDescription"] as? String
         self.autoTags = data["autoTags"] as? [String]
@@ -117,6 +141,7 @@ public struct Video: Identifiable, Codable {
         self.processingStatus = .uploading
         self.transcript = nil
         self.extractedQuotes = nil
+        self.quotes = nil
         self.autoTitle = nil
         self.autoDescription = nil
         self.autoTags = nil
@@ -151,6 +176,10 @@ public struct Video: Identifiable, Codable {
         
         if let extractedQuotes = extractedQuotes {
             data["extractedQuotes"] = extractedQuotes
+        }
+        
+        if let quotes = quotes {
+            data["quotes"] = quotes
         }
         
         if let autoTitle = autoTitle {
