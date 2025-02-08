@@ -34,8 +34,6 @@ class VideoFeedViewModel: ObservableObject {
         
         do {
             let query = firestore.collection("videos")
-                .whereField("processingStatus", isEqualTo: VideoProcessingStatus.ready.rawValue)
-                .order(by: "hotScore", descending: true)
                 .order(by: "createdAt", descending: true)
                 .limit(to: batchSize)
             
@@ -85,8 +83,6 @@ class VideoFeedViewModel: ObservableObject {
         
         do {
             let query = firestore.collection("videos")
-                .whereField("processingStatus", isEqualTo: VideoProcessingStatus.ready.rawValue)
-                .order(by: "hotScore", descending: true)
                 .order(by: "createdAt", descending: true)
                 .start(afterDocument: lastDocument)
                 .limit(to: batchSize)
