@@ -17,6 +17,7 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private var observers: [NSKeyValueObservation] = []
     private var deinitHandler: (() -> Void)?
+    private let firestore = Firestore.firestore()
     
     public init(video: Video) {
         self.video = video
@@ -110,7 +111,32 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     public func addToSecondBrain() async {
+        guard let userId = Auth.auth().currentUser?.uid else {
+            LoggingService.error("Cannot add to SecondBrain: No authenticated user", component: "SecondBrain")
+            return
+        }
+        
         showBrainAnimation = true
+        
+        // Create a new SecondBrain entry
+        let brainId = UUID().uuidString
+        let secondBrain = SecondBrain(
+            id: brainId,
+            userId: userId,
+            videoId: video.id,
+            transcript: video.transcript ?? "",
+            quotes: video.extractedQuotes ?? [],
+            videoTitle: video.title,
+            videoThumbnailURL: video.thumbnailURL
+        )
+        
+        do {
+            try await firestore.collection("secondBrain").document(brainId).setData(secondBrain.toFirestoreData())
+            LoggingService.success("Added video to SecondBrain: \(brainId)", component: "SecondBrain")
+        } catch {
+            LoggingService.error("Failed to add to SecondBrain: \(error.localizedDescription)", component: "SecondBrain")
+        }
+        
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         showBrainAnimation = false
     }
