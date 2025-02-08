@@ -21,6 +21,7 @@ struct Video: Identifiable, Codable {
     let createdAt: Date
     var likeCount: Int
     var saveCount: Int
+    var commentCount: Int
     var processingStatus: VideoProcessingStatus
     var transcript: String?
     var extractedQuotes: [String]?
@@ -40,6 +41,7 @@ struct Video: Identifiable, Codable {
         case createdAt
         case likeCount
         case saveCount
+        case commentCount
         case ownerUsername
         case ownerProfilePicURL
         case processingStatus
@@ -78,6 +80,7 @@ struct Video: Identifiable, Codable {
         self.createdAt = createdAt
         self.likeCount = (data["likeCount"] as? Int) ?? 0
         self.saveCount = (data["saveCount"] as? Int) ?? 0
+        self.commentCount = (data["commentCount"] as? Int) ?? 0
         self.ownerUsername = ownerUsername
         self.ownerProfilePicURL = data["ownerProfilePicURL"] as? String
         self.processingStatus = processingStatus
@@ -102,6 +105,7 @@ struct Video: Identifiable, Codable {
         self.createdAt = Date()
         self.likeCount = 0
         self.saveCount = 0
+        self.commentCount = 0
         self.ownerUsername = ownerUsername
         self.ownerProfilePicURL = ownerProfilePicURL
         self.processingStatus = .uploading
@@ -123,6 +127,7 @@ struct Video: Identifiable, Codable {
             "createdAt": Timestamp(date: createdAt),
             "likeCount": likeCount,
             "saveCount": saveCount,
+            "commentCount": commentCount,
             "ownerUsername": ownerUsername,
             "processingStatus": processingStatus.rawValue
         ]

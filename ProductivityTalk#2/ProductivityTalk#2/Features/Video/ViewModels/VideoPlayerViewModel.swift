@@ -91,12 +91,13 @@ class VideoPlayerViewModel: ObservableObject {
         
         Task {
             do {
-                try await firestore.runTransaction({ (transaction, errorPointer) -> Any? in
+                _ = try await firestore.runTransaction({ (transaction, errorPointer) -> Any? in
                     let videoDoc: DocumentSnapshot
                     do {
                         videoDoc = try transaction.getDocument(videoRef)
                     } catch let fetchError as NSError {
                         errorPointer?.pointee = fetchError
+                        print("❌ VideoPlayer: Failed to fetch video document in like transaction: \(fetchError)")
                         return nil
                     }
                     
@@ -140,12 +141,13 @@ class VideoPlayerViewModel: ObservableObject {
         
         Task {
             do {
-                try await firestore.runTransaction({ (transaction, errorPointer) -> Any? in
+                _ = try await firestore.runTransaction({ (transaction, errorPointer) -> Any? in
                     let videoDoc: DocumentSnapshot
                     do {
                         videoDoc = try transaction.getDocument(videoRef)
                     } catch let fetchError as NSError {
                         errorPointer?.pointee = fetchError
+                        print("❌ VideoPlayer: Failed to fetch video document in save transaction: \(fetchError)")
                         return nil
                     }
                     
