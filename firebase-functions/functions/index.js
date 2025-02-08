@@ -43,8 +43,11 @@ exports.processVideo = onObjectFinalized({
     return;
   }
 
+  // Extract the video ID from the filename (remove .mp4 extension)
+  const videoId = path.basename(fileName, ".mp4");
+  console.log(`Processing video with ID: ${videoId}`);
+
   const bucket = storage.bucket(event.data.bucket);
-  const videoId = path.basename(fileName, path.extname(fileName));
 
   try {
     // Update status to processing
@@ -285,8 +288,14 @@ exports.processVideo = onObjectFinalized({
   } catch (error) {
     console.error("Error processing video:", error);
     // Update video status to error
-    await admin.firestore().collection("videos").doc(videoId).update({
-      processingStatus: "error",
-    }).catch(console.error);
+    try {
+      await admin.firestore().collection("videos").doc(videoId).update({
+        processingStatus: "error",
+        processingError: error.message || "Unknown error occurred"
+      });
+      console.log(`Updated video ${videoId} status to error`);
+    } catch (updateError) {
+      console.error("Failed to update error status:", updateError);
+    }
   }
 });
