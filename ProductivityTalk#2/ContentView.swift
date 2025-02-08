@@ -20,10 +20,12 @@ struct ContentView: View {
                             Label("For You", systemImage: "play.circle.fill")
                         }
                     
-                    Text("Second Brain")
-                        .tabItem {
-                            Label("Second Brain", systemImage: "brain.head.profile")
-                        }
+                    NavigationView {
+                        InsightsView()
+                    }
+                    .tabItem {
+                        Label("Second Brain", systemImage: "brain.head.profile")
+                    }
                     
                     VideoUploadView()
                         .tabItem {
@@ -35,10 +37,12 @@ struct ContentView: View {
                             Label("Calendar", systemImage: "calendar")
                         }
                     
-                    Text("Profile")
-                        .tabItem {
-                            Label("Profile", systemImage: "person.circle")
-                        }
+                    NavigationView {
+                        ProfileView()
+                    }
+                    .tabItem {
+                        Label("Profile", systemImage: "person.circle")
+                    }
                 }
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {

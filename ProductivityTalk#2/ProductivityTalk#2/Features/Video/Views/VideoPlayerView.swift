@@ -59,10 +59,36 @@ struct VideoPlayerView: View {
                                     .foregroundColor(viewModel.isLiked ? .red : .white)
                             }
                             
-                            Button(action: viewModel.toggleSave) {
-                                Image(systemName: viewModel.isSaved ? "bookmark.fill" : "bookmark")
+                            Button {
+                                Task {
+                                    do {
+                                        try await viewModel.saveToSecondBrain()
+                                        withAnimation {
+                                            showSaveConfirmation = true
+                                        }
+                                        // Hide confirmation after delay
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                            withAnimation {
+                                                showSaveConfirmation = false
+                                            }
+                                        }
+                                    } catch {
+                                        errorMessage = error.localizedDescription
+                                        withAnimation {
+                                            showSaveError = true
+                                        }
+                                        // Hide error after delay
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                            withAnimation {
+                                                showSaveError = false
+                                            }
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "brain.head.profile")
                                     .font(.title)
-                                    .foregroundColor(viewModel.isSaved ? .yellow : .white)
+                                    .foregroundColor(.white)
                             }
                             
                             Button {
