@@ -66,40 +66,77 @@ class SecondBrainViewModel: ObservableObject {
             let receivedCommentsSnapshot = try await db.collection("comments")
                 .whereField("videoId", in: videoIds)
                 .getDocuments()
+                
+            // Get Second Brain entries
+            let secondBrainSnapshot = try await db.collection("users")
+                .document(userId)
+                .collection("secondBrain")
+                .getDocuments()
             
-            // Calculate statistics
+            // Calculate video statistics
             let totalVideos = videosSnapshot.documents.count
             let totalViews = videosSnapshot.documents.reduce(0) { $0 + (($1.data()["viewCount"] as? Int) ?? 0) }
             let totalLikes = videosSnapshot.documents.reduce(0) { $0 + (($1.data()["likeCount"] as? Int) ?? 0) }
             let totalShares = videosSnapshot.documents.reduce(0) { $0 + (($1.data()["shareCount"] as? Int) ?? 0) }
             let totalSaves = videosSnapshot.documents.reduce(0) { $0 + (($1.data()["saveCount"] as? Int) ?? 0) }
             
+            // Calculate comment statistics
             let totalComments = commentsSnapshot.documents.count
             let totalSecondBrains = commentsSnapshot.documents.reduce(0) { $0 + (($1.data()["secondBrainCount"] as? Int) ?? 0) }
             let receivedSecondBrains = receivedCommentsSnapshot.documents.reduce(0) { $0 + (($1.data()["secondBrainCount"] as? Int) ?? 0) }
             
+            // Calculate Second Brain statistics
+            var totalQuotes = 0
+            var totalTranscripts = 0
+            for doc in secondBrainSnapshot.documents {
+                if let quotes = doc.data()["quotes"] as? [String] {
+                    totalQuotes += quotes.count
+                }
+                if doc.data()["transcript"] as? String != nil {
+                    totalTranscripts += 1
+                }
+            }
+            
             // Calculate engagement rates
             let videoEngagementRate = totalVideos > 0 ? Double(totalLikes + totalShares + totalSaves) / Double(totalViews) : 0.0
             let commentEngagementRate = totalComments > 0 ? Double(totalSecondBrains) / Double(totalComments) : 0.0
+            let secondBrainEngagementRate = secondBrainSnapshot.documents.count > 0 ? Double(totalQuotes + totalTranscripts) / Double(secondBrainSnapshot.documents.count) : 0.0
             
             // Update user document
             let userRef = db.collection("users").document(userId)
             let updateData: [String: Sendable] = [
+                // Video statistics
                 "totalVideosUploaded": totalVideos,
                 "totalVideoViews": totalViews,
                 "totalVideoLikes": totalLikes,
                 "totalVideoShares": totalShares,
                 "totalVideoSaves": totalSaves,
+                
+                // Comment statistics
                 "totalCommentsPosted": totalComments,
                 "totalCommentSecondBrains": totalSecondBrains,
                 "commentsReceivedSecondBrains": receivedSecondBrains,
+                
+                // Second Brain statistics
+                "totalSecondBrainSaves": secondBrainSnapshot.documents.count,
+                "totalQuotesSaved": totalQuotes,
+                "totalTranscriptsSaved": totalTranscripts,
+                
+                // Engagement rates
                 "videoEngagementRate": videoEngagementRate,
                 "commentEngagementRate": commentEngagementRate,
+                "secondBrainEngagementRate": secondBrainEngagementRate,
+                
                 "lastActiveDate": Timestamp(date: Date())
             ]
             
             try await userRef.setData(updateData, merge: true)
             print("✅ SecondBrainViewModel: Successfully updated user statistics")
+            print("📊 Statistics Summary:")
+            print("   - Total Second Brain Saves: \(secondBrainSnapshot.documents.count)")
+            print("   - Total Quotes Saved: \(totalQuotes)")
+            print("   - Total Transcripts Saved: \(totalTranscripts)")
+            print("   - Second Brain Engagement Rate: \(secondBrainEngagementRate)")
             
             // Reload user data to reflect changes
             await loadUserData()

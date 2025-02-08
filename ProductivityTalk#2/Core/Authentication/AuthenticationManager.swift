@@ -53,27 +53,28 @@ class AuthenticationManager: ObservableObject {
     }
     
     private func setupAuthStateHandler() {
+        print("🔐 Auth: Setting up authentication state handler")
         authStateHandle = auth.addStateDidChangeListener { [weak self] _, user in
             guard let self = self else { return }
             self.currentUser = user
             self.isAuthenticated = user != nil
             
             if let user = user {
-                print("🔐 Auth: Authentication state changed - User: \(user.uid)")
+                print("✅ Auth: User authenticated - ID: \(user.uid)")
                 UserDefaults.standard.set(user.uid, forKey: "userId")
                 Task {
                     await self.fetchAppUser(uid: user.uid)
                 }
             } else {
-                print("🔐 Auth: User signed out")
+                print("ℹ️ Auth: No authenticated user")
                 UserDefaults.standard.removeObject(forKey: "userId")
-                self.appUser = .none
+                self.appUser = nil
             }
         }
     }
     
     private func fetchAppUser(uid: String) async {
-        print("🔐 Auth: Fetching app user data for UID: \(uid)")
+        print("🔍 Auth: Fetching app user data for UID: \(uid)")
         do {
             let document = try await firestore.collection("users").document(uid).getDocument()
             if let appUser = AppUser(document: document) {
@@ -81,9 +82,11 @@ class AuthenticationManager: ObservableObject {
                 print("✅ Auth: Successfully fetched app user data")
             } else {
                 print("❌ Auth: Failed to parse app user data")
+                self.authError = .unknown(NSError(domain: "Auth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to parse user data"]))
             }
         } catch {
             print("❌ Auth: Failed to fetch app user data: \(error.localizedDescription)")
+            self.authError = .unknown(error)
         }
     }
     
@@ -125,23 +128,35 @@ class AuthenticationManager: ObservableObject {
     }
     
     private func createUserDocument(uid: String, email: String, username: String) async throws {
-        print("🔐 Auth: Creating user document for UID: \(uid)")
+        print("📝 Auth: Creating user document for UID: \(uid)")
         let userData: [String: Any] = [
             "username": username,
             "email": email,
             "createdAt": Timestamp(date: Date()),
             "profilePicURL": "",
-            "bio": ""
+            "bio": "",
+            // Initialize all required statistics
+            "totalVideosUploaded": 0,
+            "totalVideoViews": 0,
+            "totalVideoLikes": 0,
+            "totalVideoShares": 0,
+            "totalVideoSaves": 0,
+            "totalSecondBrainSaves": 0,
+            "currentStreak": 0,
+            "longestStreak": 0,
+            "lastActiveDate": Timestamp(date: Date()),
+            "topicDistribution": [:] as [String: Int]
         ]
         
         try await firestore.collection("users").document(uid).setData(userData)
+        print("✅ Auth: Successfully created user document with initial statistics")
     }
     
     func signIn(email: String, password: String) async throws {
         print("🔐 Auth: Attempting to sign in user with email: \(email)")
         do {
-            try await auth.signIn(withEmail: email, password: password)
-            print("✅ Auth: Successfully signed in user")
+            let result = try await auth.signIn(withEmail: email, password: password)
+            print("✅ Auth: Successfully signed in user: \(result.user.uid)")
         } catch let error as NSError {
             print("❌ Auth: Sign in failed with error: \(error.localizedDescription)")
             switch error.code {
@@ -149,6 +164,8 @@ class AuthenticationManager: ObservableObject {
                 throw AuthError.invalidCredentials
             case AuthErrorCode.userNotFound.rawValue:
                 throw AuthError.userNotFound
+            case AuthErrorCode.networkError.rawValue:
+                throw AuthError.networkError
             default:
                 throw AuthError.unknown(error)
             }
@@ -160,6 +177,7 @@ class AuthenticationManager: ObservableObject {
         do {
             try auth.signOut()
             print("✅ Auth: Successfully signed out user")
+            UserDefaults.standard.removeObject(forKey: "userId")
         } catch {
             print("❌ Auth: Sign out failed with error: \(error.localizedDescription)")
             throw AuthError.unknown(error)
@@ -171,9 +189,18 @@ class AuthenticationManager: ObservableObject {
         do {
             try await auth.sendPasswordReset(withEmail: email)
             print("✅ Auth: Successfully sent password reset email")
-        } catch {
+        } catch let error as NSError {
             print("❌ Auth: Password reset failed with error: \(error.localizedDescription)")
-            throw AuthError.unknown(error)
+            switch error.code {
+            case AuthErrorCode.invalidEmail.rawValue:
+                throw AuthError.invalidEmail
+            case AuthErrorCode.userNotFound.rawValue:
+                throw AuthError.userNotFound
+            case AuthErrorCode.networkError.rawValue:
+                throw AuthError.networkError
+            default:
+                throw AuthError.unknown(error)
+            }
         }
     }
 } 

@@ -14,10 +14,11 @@ class InsightsViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let lastInsightUpdateKey = "lastDailyInsightUpdate"
     private let cachedDailyInsightKey = "cachedDailyInsight"
+    private let secondBrainViewModel = SecondBrainViewModel()
     
     struct SavedInsight: Identifiable {
         let id: String
-        let quote: String
+        let quotes: [String]
         let videoId: String
         let savedAt: Date
         let category: String
@@ -26,17 +27,30 @@ class InsightsViewModel: ObservableObject {
     
     init() {
         print("💡 InsightsViewModel: Initializing")
+        print("🔍 InsightsViewModel: Checking for cached daily insight")
         loadCachedDailyInsight()
     }
     
     private func loadCachedDailyInsight() {
-        if let lastUpdate = UserDefaults.standard.object(forKey: lastInsightUpdateKey) as? Date,
-           Calendar.current.isDateInToday(lastUpdate),
-           let cachedInsight = UserDefaults.standard.string(forKey: cachedDailyInsightKey) {
-            print("📖 InsightsViewModel: Loading cached daily insight from today")
-            self.dailyInsight = cachedInsight
+        print("📖 InsightsViewModel: Starting cached insight load")
+        if let lastUpdate = UserDefaults.standard.object(forKey: lastInsightUpdateKey) as? Date {
+            print("📅 InsightsViewModel: Last update found: \(lastUpdate)")
+            if Calendar.current.isDateInToday(lastUpdate) {
+                print("✅ InsightsViewModel: Last update was today")
+                if let cachedInsight = UserDefaults.standard.string(forKey: cachedDailyInsightKey) {
+                    print("📖 InsightsViewModel: Loading cached daily insight: \(cachedInsight)")
+                    self.dailyInsight = cachedInsight
+                } else {
+                    print("⚠️ InsightsViewModel: No cached insight found despite having today's update")
+                }
+            } else {
+                print("🔄 InsightsViewModel: Last update was not today, fetching new insight")
+                Task {
+                    await fetchDailyInsight()
+                }
+            }
         } else {
-            print("🔄 InsightsViewModel: No valid cached insight found, will fetch new one")
+            print("🆕 InsightsViewModel: No last update found, fetching new insight")
             Task {
                 await fetchDailyInsight()
             }
@@ -44,105 +58,200 @@ class InsightsViewModel: ObservableObject {
     }
     
     func fetchDailyInsight() async {
+        print("\n🎯 InsightsViewModel: Starting daily insight fetch")
         guard let userId = AuthenticationManager.shared.currentUser?.uid else {
-            print("❌ InsightsViewModel: No user ID found")
+            print("❌ InsightsViewModel: No user ID found - Authentication required")
             self.error = "Please sign in to view insights"
             return
         }
+        print("👤 InsightsViewModel: User authenticated - ID: \(userId)")
         
         // Check if we already have a daily insight from today
-        if let lastUpdate = UserDefaults.standard.object(forKey: lastInsightUpdateKey) as? Date,
-           Calendar.current.isDateInToday(lastUpdate) {
-            print("✨ InsightsViewModel: Already have today's insight")
-            return
+        if let lastUpdate = UserDefaults.standard.object(forKey: lastInsightUpdateKey) as? Date {
+            print("📅 InsightsViewModel: Found last update: \(lastUpdate)")
+            if Calendar.current.isDateInToday(lastUpdate) {
+                print("✨ InsightsViewModel: Already have today's insight, skipping fetch")
+                return
+            }
         }
         
         isLoading = true
-        print("🎯 InsightsViewModel: Fetching daily insight for user: \(userId)")
+        print("🔍 InsightsViewModel: Fetching daily insight for user: \(userId)")
         
         do {
-            // Get all second brain entries
+            print("📚 InsightsViewModel: Querying Firestore path: users/\(userId)/secondBrain")
             let snapshot = try await db.collection("users")
                 .document(userId)
                 .collection("secondBrain")
                 .getDocuments()
             
-            print("📚 InsightsViewModel: Found \(snapshot.documents.count) second brain entries")
+            print("📊 InsightsViewModel: Query results:")
+            print("   - Total documents: \(snapshot.documents.count)")
             
             // Collect all quotes
             var allQuotes: [(quote: String, videoId: String)] = []
             for doc in snapshot.documents {
-                if let quotes = doc.data()["quotes"] as? [String],
-                   let videoId = doc.data()["videoId"] as? String {
-                    quotes.forEach { quote in
-                        allQuotes.append((quote: quote, videoId: videoId))
+                print("\n🔄 Processing document: \(doc.documentID)")
+                let data = doc.data()
+                print("📄 Document data: \(data)")
+                
+                if let quotes = data["quotes"] as? [String] {
+                    print("📝 Found quotes array with \(quotes.count) quotes")
+                    if let videoId = data["videoId"] as? String {
+                        quotes.forEach { quote in
+                            print("➕ Adding quote: \(quote)")
+                            allQuotes.append((quote: quote, videoId: videoId))
+                        }
+                    } else {
+                        print("⚠️ Missing videoId for document \(doc.documentID)")
                     }
+                } else {
+                    print("⚠️ No quotes array found in document \(doc.documentID)")
                 }
             }
             
-            print("📝 InsightsViewModel: Collected \(allQuotes.count) total quotes")
+            print("\n📝 InsightsViewModel: Collection Summary")
+            print("   - Total quotes collected: \(allQuotes.count)")
             
             // Select a random quote
             if let randomQuote = allQuotes.randomElement() {
+                print("✅ Selected random quote: \(randomQuote.quote)")
                 self.dailyInsight = randomQuote.quote
                 
                 // Cache the new daily insight
                 UserDefaults.standard.set(Date(), forKey: lastInsightUpdateKey)
                 UserDefaults.standard.set(randomQuote.quote, forKey: cachedDailyInsightKey)
                 
-                print("✅ InsightsViewModel: Selected and cached new daily insight")
+                print("💾 InsightsViewModel: Cached new daily insight")
             } else {
-                print("❌ InsightsViewModel: No quotes available")
+                print("❌ InsightsViewModel: No quotes available to select from")
                 self.error = "No insights available yet"
             }
         } catch {
-            print("❌ InsightsViewModel: Error fetching daily insight: \(error.localizedDescription)")
-            self.error = "Failed to fetch daily insight"
+            print("\n❌ InsightsViewModel: Error fetching daily insight")
+            print("   - Error: \(error.localizedDescription)")
+            print("   - Collection path: users/\(userId)/secondBrain")
+            self.error = "Failed to fetch daily insight: \(error.localizedDescription)"
         }
         
         isLoading = false
+        print("\n🏁 InsightsViewModel: Finished daily insight fetch")
     }
     
     func saveInsight(_ quote: String, from videoId: String) async {
+        print("\n💾 InsightsViewModel: Starting to save insight")
         guard let userId = AuthenticationManager.shared.currentUser?.uid else {
-            print("❌ InsightsViewModel: No user ID found")
+            print("❌ InsightsViewModel: No user ID found - Authentication required")
+            self.error = "Please sign in to save insights"
             return
         }
         
-        print("💾 InsightsViewModel: Saving insight from video: \(videoId)")
+        print("👤 InsightsViewModel: User authenticated - ID: \(userId)")
+        print("🎥 InsightsViewModel: Saving insight from video: \(videoId)")
         
         do {
             // Get video details
+            print("🔍 InsightsViewModel: Fetching video details")
             let videoDoc = try await db.collection("videos").document(videoId).getDocument()
-            let videoData = videoDoc.data()
-            let videoTitle = videoData?["title"] as? String
-            let tags = videoData?["tags"] as? [String] ?? []
+            guard let videoData = videoDoc.data() else {
+                print("❌ InsightsViewModel: No video data found for ID: \(videoId)")
+                self.error = "Video not found"
+                return
+            }
             
-            // Create second brain entry
+            print("📄 InsightsViewModel: Video data retrieved")
+            let videoTitle = videoData["title"] as? String
+            let tags = videoData["tags"] as? [String] ?? []
+            let transcript = videoData["transcript"] as? String
+            
+            if transcript == nil {
+                print("⚠️ InsightsViewModel: No transcript found for video")
+            }
+            
+            // Create second brain entry with all required fields
             let entryId = UUID().uuidString
+            print("🆕 InsightsViewModel: Creating new SecondBrain entry with ID: \(entryId)")
+            
             let data: [String: Any] = [
                 "userId": userId,
                 "videoId": videoId,
-                "quotes": [quote],  // Store as array of quotes
+                "quotes": [quote],
                 "savedAt": Timestamp(date: Date()),
                 "videoTitle": videoTitle ?? "",
                 "category": tags.first ?? "Uncategorized",
-                "transcript": videoData?["transcript"] as? String ?? ""  // Include transcript if available
+                "transcript": transcript ?? "",  // Ensure transcript is never nil
+                "videoThumbnailURL": videoData["thumbnailURL"] as? String ?? ""
             ]
             
+            print("📝 InsightsViewModel: Prepared document data:")
+            print("   - User ID: \(userId)")
+            print("   - Video ID: \(videoId)")
+            print("   - Quote Length: \(quote.count) characters")
+            print("   - Video Title: \(videoTitle ?? "Not Set")")
+            print("   - Category: \(tags.first ?? "Uncategorized")")
+            print("   - Has Transcript: \(transcript != nil)")
+            
+            // Save to Firestore
             try await db.collection("users")
                 .document(userId)
-                .collection("secondBrain")  // Changed from savedInsights to secondBrain
+                .collection("secondBrain")
                 .document(entryId)
                 .setData(data)
             
             print("✅ InsightsViewModel: Successfully saved insight to Second Brain")
+            
+            // Update user's statistics
+            try await updateUserStatistics(userId: userId)
+            
+            // Update Second Brain statistics
+            await secondBrainViewModel.updateStatistics()
+            
+            // Reload insights
             await loadSavedInsights()
             
         } catch {
-            print("❌ InsightsViewModel: Error saving insight: \(error.localizedDescription)")
-            self.error = "Failed to save insight"
+            print("❌ InsightsViewModel: Error saving insight")
+            print("   - Error: \(error.localizedDescription)")
+            self.error = "Failed to save insight: \(error.localizedDescription)"
         }
+    }
+    
+    private func updateUserStatistics(userId: String) async throws {
+        print("📊 InsightsViewModel: Updating user statistics")
+        let userRef = db.collection("users").document(userId)
+        
+        // Get current statistics
+        let userDoc = try await userRef.getDocument()
+        let currentSaves = (userDoc.data()?["totalSecondBrainSaves"] as? Int) ?? 0
+        let currentQuotes = (userDoc.data()?["totalQuotesSaved"] as? Int) ?? 0
+        let currentTranscripts = (userDoc.data()?["totalTranscriptsSaved"] as? Int) ?? 0
+        
+        // Get all saved insights to calculate accurate statistics
+        let insightsSnapshot = try await userRef.collection("secondBrain").getDocuments()
+        var totalQuotes = 0
+        var totalTranscripts = 0
+        
+        for doc in insightsSnapshot.documents {
+            if let quotes = doc.data()["quotes"] as? [String] {
+                totalQuotes += quotes.count
+            }
+            if doc.data()["transcript"] as? String != nil {
+                totalTranscripts += 1
+            }
+        }
+        
+        // Update statistics
+        try await userRef.updateData([
+            "totalSecondBrainSaves": currentSaves + 1,
+            "totalQuotesSaved": totalQuotes,
+            "totalTranscriptsSaved": totalTranscripts,
+            "lastActiveDate": Timestamp(date: Date())
+        ])
+        
+        print("✅ InsightsViewModel: Successfully updated user statistics")
+        print("   - Total Second Brain Saves: \(currentSaves + 1)")
+        print("   - Total Quotes Saved: \(totalQuotes)")
+        print("   - Total Transcripts Saved: \(totalTranscripts)")
     }
     
     func loadSavedInsights() async {
@@ -176,18 +285,14 @@ class InsightsViewModel: ObservableObject {
                 print("\n🔄 Processing document: \(doc.documentID)")
                 
                 guard let quotes = doc.data()["quotes"] as? [String],
+                      !quotes.isEmpty,
                       let videoId = doc.data()["videoId"] as? String,
                       let savedAt = (doc.data()["savedAt"] as? Timestamp)?.dateValue() else {
                     print("⚠️ InsightsViewModel: Document \(doc.documentID) missing required fields")
                     print("   - Has quotes: \(doc.data()["quotes"] != nil)")
+                    print("   - Quotes count: \((doc.data()["quotes"] as? [String])?.count ?? 0)")
                     print("   - Has videoId: \(doc.data()["videoId"] != nil)")
                     print("   - Has savedAt: \(doc.data()["savedAt"] != nil)")
-                    skippedCount += 1
-                    return nil
-                }
-                
-                guard let quote = quotes.first else {
-                    print("⚠️ InsightsViewModel: Document \(doc.documentID) has empty quotes array")
                     skippedCount += 1
                     return nil
                 }
@@ -200,11 +305,12 @@ class InsightsViewModel: ObservableObject {
                 print("   - Video ID: \(videoId)")
                 print("   - Category: \(category)")
                 print("   - Quotes count: \(quotes.count)")
+                print("   - First quote: \(quotes[0])")
                 print("   - Saved at: \(savedAt)")
                 
                 return SavedInsight(
                     id: doc.documentID,
-                    quote: quote,
+                    quotes: quotes,
                     videoId: videoId,
                     savedAt: savedAt,
                     category: category,
@@ -249,6 +355,10 @@ class InsightsViewModel: ObservableObject {
                 .delete()
             
             print("✅ InsightsViewModel: Successfully deleted insight")
+            
+            // Update Second Brain statistics
+            await secondBrainViewModel.updateStatistics()
+            
             await loadSavedInsights()
             
         } catch {

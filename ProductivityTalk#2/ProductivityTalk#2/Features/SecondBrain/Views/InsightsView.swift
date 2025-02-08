@@ -184,12 +184,21 @@ struct InsightCard: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(insight.quote)
-                .font(.body)
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(uiColor: .systemBackground))
-                .cornerRadius(12)
+            // Display first quote if available
+            if !insight.quotes.isEmpty {
+                Text(insight.quotes[0])
+                    .font(.body)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(uiColor: .systemBackground))
+                    .cornerRadius(12)
+                
+                if insight.quotes.count > 1 {
+                    Text("+\(insight.quotes.count - 1) more quotes")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
             
             HStack {
                 VStack(alignment: .leading) {
@@ -243,12 +252,20 @@ struct InsightDetailView: View {
                         .fontWeight(.bold)
                 }
                 
-                Text(insight.quote)
-                    .font(.title3)
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(uiColor: .systemBackground))
-                    .cornerRadius(12)
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Quotes")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                    
+                    ForEach(insight.quotes, id: \.self) { quote in
+                        Text(quote)
+                            .font(.body)
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(uiColor: .systemBackground))
+                            .cornerRadius(12)
+                    }
+                }
                 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -261,6 +278,12 @@ struct InsightDetailView: View {
                         Text("Saved on:")
                             .fontWeight(.medium)
                         Text(insight.savedAt.formatted())
+                    }
+                    
+                    HStack {
+                        Text("Total Quotes:")
+                            .fontWeight(.medium)
+                        Text("\(insight.quotes.count)")
                     }
                 }
                 .foregroundColor(.gray)

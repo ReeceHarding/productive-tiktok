@@ -32,14 +32,36 @@ struct SecondBrain: Identifiable, Codable {
         }
         
         self.id = document.documentID
-        guard let userId = data["userId"] as? String,
-              let videoId = data["videoId"] as? String,
-              let transcript = data["transcript"] as? String,
-              let quotes = data["quotes"] as? [String],
-              let savedAt = (data["savedAt"] as? Timestamp)?.dateValue() else {
-            print("❌ SecondBrain: Failed to initialize - Missing required fields")
+        print("🔍 SecondBrain: Processing document \(document.documentID)")
+        print("📄 Document data: \(data)")
+        
+        // Check each required field individually for better error reporting
+        guard let userId = data["userId"] as? String else {
+            print("❌ SecondBrain: Missing required field 'userId' in document \(document.documentID)")
             return nil
         }
+        
+        guard let videoId = data["videoId"] as? String else {
+            print("❌ SecondBrain: Missing required field 'videoId' in document \(document.documentID)")
+            return nil
+        }
+        
+        guard let transcript = data["transcript"] as? String else {
+            print("❌ SecondBrain: Missing required field 'transcript' in document \(document.documentID)")
+            return nil
+        }
+        
+        guard let quotes = data["quotes"] as? [String] else {
+            print("❌ SecondBrain: Missing required field 'quotes' in document \(document.documentID)")
+            return nil
+        }
+        
+        guard let savedAtTimestamp = data["savedAt"] as? Timestamp else {
+            print("❌ SecondBrain: Missing required field 'savedAt' in document \(document.documentID)")
+            return nil
+        }
+        
+        let savedAt = savedAtTimestamp.dateValue()
         
         self.userId = userId
         self.videoId = videoId
@@ -50,6 +72,14 @@ struct SecondBrain: Identifiable, Codable {
         self.videoThumbnailURL = data["videoThumbnailURL"] as? String
         
         print("✅ SecondBrain: Successfully initialized entry with ID: \(id)")
+        print("📊 SecondBrain: Document Summary:")
+        print("   - User ID: \(userId)")
+        print("   - Video ID: \(videoId)")
+        print("   - Quotes Count: \(quotes.count)")
+        print("   - Has Transcript: \(transcript.isEmpty ? "Empty" : "Yes")")
+        print("   - Saved At: \(savedAt)")
+        print("   - Video Title: \(self.videoTitle ?? "Not Set")")
+        print("   - Thumbnail URL: \(self.videoThumbnailURL ?? "Not Set")")
     }
     
     // Initialize directly

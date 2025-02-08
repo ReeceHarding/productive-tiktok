@@ -5,6 +5,9 @@ import PhotosUI
 import SwiftUI
 import Combine
 
+// Import AuthenticationManager from Core
+import class ProductivityTalk_2.AuthenticationManager
+
 @MainActor
 class ProfileViewModel: ObservableObject {
     @Published private(set) var user: AppUser?
@@ -126,6 +129,19 @@ class ProfileViewModel: ObservableObject {
         } catch {
             print("❌ ProfileViewModel: Error uploading profile image: \(error.localizedDescription)")
             self.error = "Failed to upload profile image"
+        }
+    }
+    
+    @MainActor
+    func signOut() async {
+        print("🚪 ProfileViewModel: Attempting to sign out user")
+        do {
+            try AuthenticationManager.shared.signOut()
+            print("✅ ProfileViewModel: Successfully signed out user")
+            self.user = nil
+        } catch {
+            print("❌ ProfileViewModel: Error signing out: \(error.localizedDescription)")
+            self.error = "Failed to sign out: \(error.localizedDescription)"
         }
     }
     
