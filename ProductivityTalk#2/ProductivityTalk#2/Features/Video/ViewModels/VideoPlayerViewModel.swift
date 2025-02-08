@@ -2,6 +2,7 @@ import Foundation
 import AVKit
 import FirebaseFirestore
 import FirebaseAuth
+import Combine
 
 @MainActor
 class VideoPlayerViewModel: ObservableObject {
@@ -113,7 +114,6 @@ class VideoPlayerViewModel: ObservableObject {
     }
     
     @objc private func playerItemDidPlayToEndTime() {
-        print("✅ VideoPlayer: Playback completed - restarting for loop")
         player?.seek(to: .zero)
         player?.play()
     }
@@ -192,14 +192,15 @@ class VideoPlayerViewModel: ObservableObject {
         // Check Second Brain status
         Task {
             do {
-                let secondBrainDoc = try await firestore.collection("users")
+                let secondBrainQuery = try await firestore.collection("users")
                     .document(userId)
                     .collection("secondBrain")
-                    .document(video.id)
-                    .getDocument()
+                    .whereField("videoId", isEqualTo: video.id)
+                    .limit(to: 1)
+                    .getDocuments()
                 
                 await MainActor.run {
-                    self.isInSecondBrain = secondBrainDoc.exists
+                    self.isInSecondBrain = !secondBrainQuery.documents.isEmpty
                 }
                 print("✅ VideoPlayer: Second Brain status checked - isInSecondBrain: \(self.isInSecondBrain)")
             } catch {
@@ -305,34 +306,55 @@ class VideoPlayerViewModel: ObservableObject {
     }
     
     func saveToSecondBrain() async throws {
-        print("🧠 VideoPlayer: Attempting to save video to Second Brain")
+        print("🧠 VideoPlayer: Starting Second Brain save process...")
+        print("📊 VideoPlayer: Current video details - ID: \(video.id), Title: \(video.title)")
+        print("🔄 VideoPlayer: Processing status: \(video.processingStatus.rawValue)")
         
         guard let userId = AuthenticationManager.shared.currentUser?.uid else {
-            print("❌ VideoPlayer: No authenticated user")
+            print("❌ VideoPlayer: Save failed - No authenticated user")
             throw NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
         }
+        print("👤 VideoPlayer: User authenticated - ID: \(userId)")
         
         guard let transcript = video.transcript, !transcript.isEmpty else {
-            print("❌ VideoPlayer: No transcript available")
+            print("❌ VideoPlayer: Save failed - No transcript available for video: \(video.id)")
             throw NSError(domain: "VideoPlayer", code: -2, userInfo: [NSLocalizedDescriptionKey: "Video transcript not available yet"])
         }
+        print("📝 VideoPlayer: Transcript available - Length: \(transcript.count) characters")
         
-        let quotes = video.extractedQuotes ?? []
+        // Add validation for quotes
+        guard video.processingStatus == .ready else {
+            print("❌ VideoPlayer: Save failed - Video still processing: \(video.processingStatus.rawValue)")
+            throw NSError(domain: "VideoPlayer", code: -3, userInfo: [NSLocalizedDescriptionKey: "Video is still being processed. Please wait for quote extraction to complete."])
+        }
+        
+        guard let extractedQuotes = video.extractedQuotes, !extractedQuotes.isEmpty else {
+            print("❌ VideoPlayer: Save failed - No quotes extracted for video: \(video.id)")
+            throw NSError(domain: "VideoPlayer", code: -4, userInfo: [NSLocalizedDescriptionKey: "No quotes have been extracted from this video yet"])
+        }
+        print("💭 VideoPlayer: Extracted quotes available - Count: \(extractedQuotes.count)")
+        
         let entryId = UUID().uuidString
+        print("🔑 VideoPlayer: Generated entry ID: \(entryId)")
         
         let secondBrain = SecondBrain(
             id: entryId,
             userId: userId,
             videoId: video.id,
             transcript: transcript,
-            quotes: quotes,
+            quotes: extractedQuotes,
             videoTitle: video.title,
             videoThumbnailURL: video.thumbnailURL
         )
         
-        print("🧠 VideoPlayer: Created Second Brain entry with ID: \(entryId)")
+        print("📦 VideoPlayer: Created Second Brain entry:")
+        print("   - Entry ID: \(entryId)")
+        print("   - Video ID: \(video.id)")
+        print("   - Video Title: \(video.title)")
+        print("   - Quotes Count: \(extractedQuotes.count)")
         
         do {
+            print("💾 VideoPlayer: Attempting to save to Firestore...")
             try await firestore
                 .collection("users")
                 .document(userId)
@@ -341,8 +363,12 @@ class VideoPlayerViewModel: ObservableObject {
                 .setData(secondBrain.toFirestoreData())
             
             print("✅ VideoPlayer: Successfully saved to Second Brain")
+            print("   - Collection: users/\(userId)/secondBrain")
+            print("   - Document: \(entryId)")
         } catch {
-            print("❌ VideoPlayer: Failed to save to Second Brain: \(error.localizedDescription)")
+            print("❌ VideoPlayer: Firestore save failed")
+            print("   - Error: \(error.localizedDescription)")
+            print("   - Collection path: users/\(userId)/secondBrain")
             throw error
         }
     }
