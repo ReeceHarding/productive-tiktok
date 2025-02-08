@@ -306,45 +306,108 @@ class VideoPlayerViewModel: ObservableObject {
     }
     
     func saveToSecondBrain() async throws {
-        print("🧠 VideoPlayer: Attempting to save video to Second Brain")
-        
         guard let userId = AuthenticationManager.shared.currentUser?.uid else {
             print("❌ VideoPlayer: No authenticated user")
-            throw NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+            throw NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "No authenticated user"])
         }
         
-        guard let transcript = video.transcript, !transcript.isEmpty else {
-            print("❌ VideoPlayer: No transcript available")
-            throw NSError(domain: "VideoPlayer", code: -2, userInfo: [NSLocalizedDescriptionKey: "Video transcript not available yet"])
+        let videoRef = firestore.collection("videos").document(video.id)
+        let secondBrainRef = firestore.collection("users").document(userId).collection("secondBrain").document(video.id)
+        
+        let _ = try await firestore.runTransaction { [self] transaction, errorPointer -> Any? in
+            do {
+                // Get the current video document
+                let videoDoc = try transaction.getDocument(videoRef)
+                guard let currentSaveCount = videoDoc.data()?["saveCount"] as? Int else {
+                    errorPointer?.pointee = NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid video data"])
+                    return nil
+                }
+                
+                // Calculate new hotScore based on saves and recency
+                let createdAt = (videoDoc.data()?["createdAt"] as? Timestamp)?.dateValue() ?? Date()
+                let ageInHours = Date().timeIntervalSince(createdAt) / 3600
+                let recencyBonus = max(0, 100 - (ageInHours * 0.5)) // Decay of 0.5 points per hour, max 100 points
+                let newHotScore = Double(currentSaveCount + 1) * 10.0 + recencyBonus
+                
+                print("🔥 VideoPlayer: Calculating hotScore - Saves: \(currentSaveCount + 1), Age: \(ageInHours)h, Recency Bonus: \(recencyBonus), New Score: \(newHotScore)")
+                
+                // Update video document
+                transaction.updateData([
+                    "saveCount": currentSaveCount + 1,
+                    "hotScore": newHotScore
+                ], forDocument: videoRef)
+                
+                // Add to user's second brain
+                let secondBrainData: [String: Any] = [
+                    "videoId": self.video.id,
+                    "savedAt": Timestamp(date: Date()),
+                    "videoURL": self.video.videoURL,
+                    "thumbnailURL": self.video.thumbnailURL,
+                    "title": self.video.title,
+                    "description": self.video.description
+                ]
+                transaction.setData(secondBrainData, forDocument: secondBrainRef)
+                
+                return nil
+            } catch {
+                errorPointer?.pointee = error as NSError
+                return nil
+            }
         }
         
-        let quotes = video.extractedQuotes ?? []
-        let entryId = UUID().uuidString
+        print("✅ VideoPlayer: Successfully saved video to Second Brain")
+        await MainActor.run {
+            self.isSaved = true
+            self.isInSecondBrain = true
+        }
+    }
+    
+    func removeFromSecondBrain() async throws {
+        guard let userId = AuthenticationManager.shared.currentUser?.uid else {
+            print("❌ VideoPlayer: No authenticated user")
+            throw NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "No authenticated user"])
+        }
         
-        let secondBrain = SecondBrain(
-            id: entryId,
-            userId: userId,
-            videoId: video.id,
-            transcript: transcript,
-            quotes: quotes,
-            videoTitle: video.title,
-            videoThumbnailURL: video.thumbnailURL
-        )
+        let videoRef = firestore.collection("videos").document(video.id)
+        let secondBrainRef = firestore.collection("users").document(userId).collection("secondBrain").document(video.id)
         
-        print("🧠 VideoPlayer: Created Second Brain entry with ID: \(entryId)")
+        let _ = try await firestore.runTransaction { [self] transaction, errorPointer -> Any? in
+            do {
+                // Get the current video document
+                let videoDoc = try transaction.getDocument(videoRef)
+                guard let currentSaveCount = videoDoc.data()?["saveCount"] as? Int else {
+                    errorPointer?.pointee = NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid video data"])
+                    return nil
+                }
+                
+                // Calculate new hotScore based on saves and recency
+                let createdAt = (videoDoc.data()?["createdAt"] as? Timestamp)?.dateValue() ?? Date()
+                let ageInHours = Date().timeIntervalSince(createdAt) / 3600
+                let recencyBonus = max(0, 100 - (ageInHours * 0.5)) // Decay of 0.5 points per hour, max 100 points
+                let newHotScore = max(0, Double(currentSaveCount - 1) * 10.0 + recencyBonus)
+                
+                print("🔥 VideoPlayer: Calculating hotScore - Saves: \(currentSaveCount - 1), Age: \(ageInHours)h, Recency Bonus: \(recencyBonus), New Score: \(newHotScore)")
+                
+                // Update video document
+                transaction.updateData([
+                    "saveCount": max(0, currentSaveCount - 1),
+                    "hotScore": newHotScore
+                ], forDocument: videoRef)
+                
+                // Remove from user's second brain
+                transaction.deleteDocument(secondBrainRef)
+                
+                return nil
+            } catch {
+                errorPointer?.pointee = error as NSError
+                return nil
+            }
+        }
         
-        do {
-            try await firestore
-                .collection("users")
-                .document(userId)
-                .collection("secondBrain")
-                .document(entryId)
-                .setData(secondBrain.toFirestoreData())
-            
-            print("✅ VideoPlayer: Successfully saved to Second Brain")
-        } catch {
-            print("❌ VideoPlayer: Failed to save to Second Brain: \(error.localizedDescription)")
-            throw error
+        print("✅ VideoPlayer: Successfully removed video from Second Brain")
+        await MainActor.run {
+            self.isSaved = false
+            self.isInSecondBrain = false
         }
     }
     
