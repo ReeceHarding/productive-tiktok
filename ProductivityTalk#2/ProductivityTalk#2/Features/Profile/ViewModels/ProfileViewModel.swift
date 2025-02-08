@@ -5,9 +5,6 @@ import PhotosUI
 import SwiftUI
 import Combine
 
-// Import AuthenticationManager from Core
-import class ProductivityTalk_2.AuthenticationManager
-
 @MainActor
 class ProfileViewModel: ObservableObject {
     @Published private(set) var user: AppUser?

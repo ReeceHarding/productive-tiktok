@@ -3,9 +3,6 @@ import FirebaseFirestore
 
 enum VideoProcessingStatus: String, Codable {
     case uploading = "uploading"
-    case processing = "processing"
-    case transcribing = "transcribing"
-    case extracting_quotes = "extracting_quotes"
     case ready = "ready"
     case error = "error"
 }
@@ -14,7 +11,7 @@ struct Video: Identifiable, Codable {
     var id: String
     let ownerId: String
     let videoURL: String
-    let thumbnailURL: String
+    let thumbnailURL: String?
     let title: String
     var tags: [String]
     var description: String
@@ -58,7 +55,7 @@ struct Video: Identifiable, Codable {
     // Initialize from Firestore document
     init?(document: DocumentSnapshot) {
         guard let data = document.data() else {
-            print("❌ Video: Failed to initialize - No data in document")
+            LoggingService.error("Failed to initialize - No data in document", component: "Video")
             return nil
         }
         
@@ -73,7 +70,7 @@ struct Video: Identifiable, Codable {
               let ownerUsername = data["ownerUsername"] as? String,
               let processingStatusRaw = data["processingStatus"] as? String,
               let processingStatus = VideoProcessingStatus(rawValue: processingStatusRaw) else {
-            print("❌ Video: Failed to initialize - Missing required fields")
+            LoggingService.error("Failed to initialize - Missing required fields", component: "Video")
             return nil
         }
         
@@ -96,7 +93,7 @@ struct Video: Identifiable, Codable {
         self.autoDescription = data["autoDescription"] as? String
         self.autoTags = data["autoTags"] as? [String]
         
-        print("✅ Video: Successfully initialized video with ID: \(id)")
+        LoggingService.success("Successfully initialized video with ID: \(id)", component: "Video")
     }
     
     // Initialize directly
@@ -124,7 +121,7 @@ struct Video: Identifiable, Codable {
         self.autoDescription = nil
         self.autoTags = nil
         
-        print("✅ Video: Created new video with ID: \(id)")
+        LoggingService.success("Created new video with ID: \(id)", component: "Video")
     }
     
     // Convert to Firestore data
@@ -168,7 +165,7 @@ struct Video: Identifiable, Codable {
             data["autoTags"] = autoTags
         }
         
-        print("✅ Video: Converted video data to Firestore format")
+        LoggingService.success("Converted video data to Firestore format", component: "Video")
         return data
     }
 } 

@@ -2,9 +2,6 @@ import Foundation
 import FirebaseAuth
 import FirebaseFirestore
 
-// Import AppUser from the same target
-import struct ProductivityTalk_2.AppUser
-
 enum AuthError: Error {
     case invalidEmail
     case weakPassword

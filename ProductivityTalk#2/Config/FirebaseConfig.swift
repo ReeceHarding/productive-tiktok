@@ -59,19 +59,19 @@ class FirebaseConfig {
     
     func videoStorageReference(userId: String, videoId: String) -> StorageReference {
         let ref = Storage.storage().reference().child("videos/\(userId)/\(videoId).mp4")
-        print("📦 Firebase: Creating video storage reference - path: videos/\(userId)/\(videoId).mp4")
+        LoggingService.storage("Creating video storage reference - path: videos/\(userId)/\(videoId).mp4", component: "Config")
         return ref
     }
     
     func thumbnailStorageReference(userId: String, videoId: String) -> StorageReference {
         let ref = Storage.storage().reference().child("thumbnails/\(userId)/\(videoId).jpg")
-        print("📦 Firebase: Creating thumbnail storage reference - path: thumbnails/\(userId)/\(videoId).jpg")
+        LoggingService.storage("Creating thumbnail storage reference - path: thumbnails/\(userId)/\(videoId).jpg", component: "Config")
         return ref
     }
     
     func profilePictureStorageReference(userId: String) -> StorageReference {
         let ref = Storage.storage().reference().child("profile_pictures/\(userId).jpg")
-        print("📦 Firebase: Creating profile picture storage reference - path: profile_pictures/\(userId).jpg")
+        LoggingService.storage("Creating profile picture storage reference - path: profile_pictures/\(userId).jpg", component: "Config")
         return ref
     }
 } 

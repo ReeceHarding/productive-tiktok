@@ -20,7 +20,7 @@ class VideoFeedViewModel: ObservableObject {
     
     init() {
         preloadQueue.maxConcurrentOperationCount = 2
-        print("🎬 VideoFeed: Initialized with preload window of \(preloadWindow)")
+        LoggingService.video("Initialized with preload window of \(preloadWindow)", component: "Feed")
     }
     
     func fetchVideos() async {
@@ -72,52 +72,96 @@ class VideoFeedViewModel: ObservableObject {
     }
     
     func fetchNextBatch() async {
-        guard !isFetching,
-              let lastDocument = lastDocument else {
-            print("⚠️ VideoFeed: Cannot fetch next batch - already fetching or no last document")
-            return
-        }
-        
+        guard !isFetching else { return }
         isFetching = true
-        print("🔍 VideoFeed: Fetching next batch of videos")
+        isLoading = true
         
         do {
-            let query = firestore.collection("videos")
+            LoggingService.video("Fetching next batch of \(batchSize) videos", component: "Feed")
+            var query = firestore.collection("videos")
                 .order(by: "createdAt", descending: true)
-                .start(afterDocument: lastDocument)
                 .limit(to: batchSize)
             
+            if let lastDoc = lastDocument {
+                query = query.start(afterDocument: lastDoc)
+            }
+            
             let snapshot = try await query.getDocuments()
+            let newVideos = snapshot.documents.compactMap { Video(document: $0) }
             
-            let fetchedVideos = snapshot.documents.compactMap { document -> Video? in
-                print("📄 VideoFeed: Processing document with ID: \(document.documentID)")
-                return Video(document: document)
-            }
-            
-            print("✅ VideoFeed: Fetched \(fetchedVideos.count) new videos")
-            
-            if !fetchedVideos.isEmpty {
-                let nextIndex = self.videos.count
-                self.videos.append(contentsOf: fetchedVideos)
-                self.lastDocument = snapshot.documents.last
+            if !newVideos.isEmpty {
+                videos.append(contentsOf: newVideos)
+                lastDocument = snapshot.documents.last
+                LoggingService.success("Fetched \(newVideos.count) new videos", component: "Feed")
                 
-                // Create player view models for new videos
-                for video in fetchedVideos {
-                    if playerViewModels[video.id] == nil {
-                        playerViewModels[video.id] = VideoPlayerViewModel(video: video)
-                    }
+                // Preload videos within the window
+                for video in newVideos {
+                    preloadVideo(for: video)
                 }
-                
-                // Preload the first video in the new batch
-                preloadVideo(at: nextIndex)
+            } else {
+                LoggingService.info("No more videos to fetch", component: "Feed")
             }
-            
         } catch {
-            print("❌ VideoFeed: Error fetching next batch: \(error)")
+            LoggingService.error("Failed to fetch videos: \(error.localizedDescription)", component: "Feed")
             self.error = error
         }
         
         isFetching = false
+        isLoading = false
+    }
+    
+    private func preloadVideo(for video: Video) {
+        guard let url = URL(string: video.videoURL) else {
+            LoggingService.error("Invalid video URL for \(video.id)", component: "Feed")
+            return
+        }
+        
+        let preloadTask = Task {
+            // Create asset with custom loading options
+            let asset = AVURLAsset(url: url, options: [
+                "AVURLAssetPreferPreciseDurationAndTimingKey": true,
+                "AVURLAssetOutOfBandMIMETypeKey": "video/mp4"
+            ])
+            
+            let playerItem = AVPlayerItem(asset: asset)
+            let player = AVPlayer(playerItem: playerItem)
+            
+            // Enhanced buffer configuration
+            playerItem.preferredForwardBufferDuration = 4.0
+            playerItem.preferredMaximumResolution = .init(width: 1080, height: 1920)
+            
+            // Store the preloaded player
+            preloadedPlayers[video.id] = player
+            
+            do {
+                // Load essential properties asynchronously
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    group.addTask {
+                        let duration = try await asset.load(.duration)
+                        LoggingService.debug("Loaded duration for video \(video.id): \(duration.seconds) seconds", component: "Feed")
+                    }
+                    group.addTask {
+                        let tracks = try await asset.load(.tracks)
+                        LoggingService.debug("Loaded \(tracks.count) tracks for video \(video.id)", component: "Feed")
+                    }
+                    
+                    try await group.waitForAll()
+                }
+                
+                // Monitor playback buffer
+                if let playerItem = player.currentItem {
+                    LoggingService.debug("Buffer status for video \(video.id):", component: "Feed")
+                    LoggingService.debug("- Buffer full duration: \(playerItem.duration.seconds) seconds", component: "Feed")
+                    LoggingService.debug("- Playback buffer full: \(playerItem.isPlaybackBufferFull)", component: "Feed")
+                    LoggingService.debug("- Playback buffer empty: \(playerItem.isPlaybackBufferEmpty)", component: "Feed")
+                    LoggingService.debug("- Playback likely to keep up: \(playerItem.isPlaybackLikelyToKeepUp)", component: "Feed")
+                }
+            } catch {
+                LoggingService.error("Failed to preload video \(video.id): \(error.localizedDescription)", component: "Feed")
+            }
+        }
+        
+        preloadTasks[video.id] = preloadTask
     }
     
     func preloadVideo(at index: Int) {
@@ -251,5 +295,12 @@ class VideoFeedViewModel: ObservableObject {
     
     func getPreloadedPlayer(for videoId: String) -> AVPlayer? {
         return preloadedPlayers[videoId]
+    }
+    
+    func cancelPreload(for videoId: String) {
+        preloadTasks[videoId]?.cancel()
+        preloadTasks.removeValue(forKey: videoId)
+        preloadedPlayers.removeValue(forKey: videoId)
+        LoggingService.debug("Cancelled preload for video \(videoId)", component: "Feed")
     }
 } 

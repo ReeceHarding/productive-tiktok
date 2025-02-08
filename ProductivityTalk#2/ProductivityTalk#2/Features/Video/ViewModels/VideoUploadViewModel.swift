@@ -30,7 +30,7 @@ class VideoUploadViewModel: ObservableObject {
     }
     
     func loadVideos() async {
-        print("📹 Video: Starting to load selected videos")
+        LoggingService.video("Starting to load selected videos", component: "Upload")
         
         for item in selectedItems {
             let id = UUID().uuidString
@@ -38,45 +38,96 @@ class VideoUploadViewModel: ObservableObject {
             do {
                 // Load video data
                 guard let videoData = try await item.loadTransferable(type: Data.self) else {
+                    LoggingService.error("Failed to load video data", component: "Upload")
                     throw NSError(domain: "VideoUpload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load video data"])
                 }
-                print("✅ Video: Successfully loaded video data for \(id): \(ByteCountFormatter.string(fromByteCount: Int64(videoData.count), countStyle: .file))")
+                LoggingService.success("Successfully loaded video data for \(id): \(ByteCountFormatter.string(fromByteCount: Int64(videoData.count), countStyle: .file))", component: "Upload")
                 
                 // Create temporary file
                 let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(id).mov")
                 try videoData.write(to: tempURL)
-                print("✅ Video: Saved video to temporary file: \(tempURL.path)")
+                LoggingService.debug("Saved video to temporary file: \(tempURL.path)", component: "Upload")
                 
-                // Process video and get thumbnail
-                print("🎬 Video: Starting video processing")
-                let (processedVideoURL, thumbnailURL) = try await videoProcessor.processAndUploadVideo(sourceURL: tempURL)
+                // Create initial Firestore document
+                guard let userId = AuthenticationManager.shared.currentUser?.uid,
+                      let username = AuthenticationManager.shared.appUser?.username else {
+                    throw NSError(domain: "VideoUpload", 
+                                code: -2, 
+                                userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+                }
                 
-                // Load thumbnail image for UI
-                let thumbnailData = try Data(contentsOf: URL(string: thumbnailURL)!)
-                let thumbnailImage = UIImage(data: thumbnailData)
-                print("✅ Video: Generated thumbnail image for \(id)")
+                let video = Video(
+                    id: id,
+                    ownerId: userId,
+                    videoURL: "",  // Will be updated after processing
+                    thumbnailURL: "", // Will be updated after processing
+                    title: "Processing...",
+                    tags: [],
+                    description: "Processing...",
+                    ownerUsername: username
+                )
                 
-                // Store processed video data and update UI
-                self.videoData[id] = (try Data(contentsOf: URL(string: processedVideoURL)!), thumbnailData)
-                self.uploadStates[id] = UploadState(progress: 0, isComplete: false, thumbnailImage: thumbnailImage)
+                // Start a batch write
+                let batch = firestore.batch()
+                
+                // Create the video document
+                let videoRef = firestore.collection("videos").document(id)
+                batch.setData(video.toFirestoreData(), forDocument: videoRef)
+                
+                // Create user-videos relationship
+                let userVideoRef = firestore.collection("users")
+                    .document(userId)
+                    .collection("videos")
+                    .document(id)
+                batch.setData([
+                    "videoId": id,
+                    "createdAt": Timestamp()
+                ], forDocument: userVideoRef)
+                
+                // Commit the batch
+                try await batch.commit()
+                LoggingService.success("Created initial video documents", component: "Upload")
+                
+                // Process and upload video
+                LoggingService.video("Starting video processing", component: "Upload")
+                let (_, _) = try await videoProcessor.processAndUploadVideo(sourceURL: tempURL)
+                LoggingService.success("Video processed and uploaded successfully", component: "Upload")
+                
+                // Update UI state
+                await MainActor.run {
+                    self.uploadStates[id] = UploadState(progress: 1.0, isComplete: true, thumbnailImage: nil)
+                }
                 
                 // Clean up temp file
-                try FileManager.default.removeItem(at: tempURL)
+                try? FileManager.default.removeItem(at: tempURL)
+                LoggingService.debug("Cleaned up temporary file", component: "Upload")
                 
             } catch {
-                print("❌ Video: Failed to process video: \(error.localizedDescription)")
-                self.uploadStates[id] = UploadState(progress: 0, isComplete: false, thumbnailImage: nil)
-                showError = true
-                errorMessage = "Failed to process video: \(error.localizedDescription)"
+                LoggingService.error("Failed to process video: \(error.localizedDescription)", component: "Upload")
+                
+                // Update UI state
+                await MainActor.run {
+                    self.uploadStates[id] = UploadState(progress: 0, isComplete: false, thumbnailImage: nil)
+                    self.showError = true
+                    self.errorMessage = "Failed to process video: \(error.localizedDescription)"
+                }
+                
+                // Clean up Firestore document if it exists
+                try? await firestore.collection("videos").document(id).delete()
+                try? await firestore.collection("users")
+                    .document(AuthenticationManager.shared.currentUser?.uid ?? "")
+                    .collection("videos")
+                    .document(id)
+                    .delete()
             }
         }
         
-        // Start uploading all videos
-        await uploadVideos()
+        // Clear selection after processing
+        selectedItems.removeAll()
     }
     
     private func uploadVideos() async {
-        print("📤 Video: Starting upload process for \(videoData.count) videos")
+        LoggingService.video("Starting upload process for \(videoData.count) videos", component: "Upload")
         
         for (id, data) in videoData {
             do {
@@ -84,8 +135,8 @@ class VideoUploadViewModel: ObservableObject {
                 let video = Video(
                     id: id,
                     ownerId: AuthenticationManager.shared.currentUser?.uid ?? "",
-                    videoURL: "", // Will be updated after upload
-                    thumbnailURL: "", // Will be updated after upload
+                    videoURL: "",
+                    thumbnailURL: "",
                     title: "Processing...",
                     tags: [],
                     description: "Processing...",
@@ -93,11 +144,11 @@ class VideoUploadViewModel: ObservableObject {
                 )
                 
                 try await firestore.collection("videos").document(id).setData(video.toFirestoreData())
-                print("✅ Video: Created initial video document in Firestore for \(id)")
+                LoggingService.success("Created initial video document in Firestore for \(id)", component: "Upload")
                 
                 // Upload video
                 let videoRef = storage.reference().child("videos/\(id).mp4")
-                print("📤 Video: Uploading video to path: videos/\(id).mp4")
+                LoggingService.storage("Uploading video to path: videos/\(id).mp4", component: "Upload")
                 
                 let videoMetadata = StorageMetadata()
                 videoMetadata.contentType = "video/mp4"
@@ -108,46 +159,39 @@ class VideoUploadViewModel: ObservableObject {
                     onProgress: { [weak self] progress in
                         guard let progress = progress else { return }
                         let percentage = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
-                        print("📊 Video: Upload progress for \(id): \(Int(percentage * 100))%")
+                        LoggingService.progress("Video upload", progress: percentage, id: id)
                         self?.uploadStates[id]?.progress = percentage
                     }
                 )
                 
                 // Get video download URL
                 let videoURL = try await videoRef.downloadURL()
-                print("✅ Video: Video uploaded successfully. URL: \(videoURL.absoluteString)")
+                LoggingService.success("Video uploaded successfully. URL: \(videoURL.absoluteString)", component: "Upload")
                 
-                // Upload thumbnail
-                print("📤 Video: Uploading thumbnail for \(id)")
-                let thumbnailRef = storage.reference().child("thumbnails/\(id).jpg")
-                
-                let thumbnailMetadata = StorageMetadata()
-                thumbnailMetadata.contentType = "image/jpeg"
-                
-                let _ = try await thumbnailRef.putDataAsync(data.thumbnail, metadata: thumbnailMetadata)
-                let thumbnailURL = try await thumbnailRef.downloadURL()
-                print("✅ Video: Thumbnail uploaded successfully for \(id)")
-                
-                // Update Firestore document with URLs
+                // Update Firestore document with URL and ready status
                 let updateData: [String: Any] = [
                     "videoURL": videoURL.absoluteString,
-                    "thumbnailURL": thumbnailURL.absoluteString,
                     "processingStatus": VideoProcessingStatus.ready.rawValue
-                ] as [String: Any]
+                ]
                 
                 try await firestore.collection("videos").document(id).updateData(updateData)
-                print("✅ Video: Updated video URLs in Firestore for \(id)")
+                LoggingService.success("Updated video URL in Firestore for \(id)", component: "Upload")
                 
                 // Mark as complete
                 self.uploadStates[id]?.isComplete = true
                 
             } catch {
-                print("❌ Video: Upload failed for \(id): \(error.localizedDescription)")
+                LoggingService.error("Upload failed for \(id): \(error.localizedDescription)", component: "Upload")
                 self.uploadStates[id]?.progress = 0
                 showError = true
                 errorMessage = "Failed to upload video: \(error.localizedDescription)"
                 
-                // Clean up Firestore document if it exists
+                // Update status to error
+                try? await firestore.collection("videos").document(id).updateData([
+                    "processingStatus": VideoProcessingStatus.error.rawValue
+                ])
+                
+                // Clean up Firestore document if needed
                 try? await firestore.collection("videos").document(id).delete()
             }
         }

@@ -19,21 +19,40 @@ struct VideoFeedView: View {
     private let transitionAnimation = Animation.easeInOut(duration: 0.3)
     
     var body: some View {
-        ZStack {
-            videoContentLayer
-            overlayLayer
-            fixedUILayer
+        GeometryReader { geometry in
+            TabView(selection: $currentIndex) {
+                ForEach(Array(viewModel.videos.enumerated()), id: \.element.id) { index, video in
+                    VideoPlayerView(video: video)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .tag(index)
+                }
+            }
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+            .ignoresSafeArea()
+            .onChange(of: currentIndex) { oldValue, newValue in
+                LoggingService.video("Switched to video at index \(newValue)", component: "Feed")
+                performHapticFeedback(.light)
+                viewModel.preloadAdjacentVideos(currentIndex: newValue)
+                
+                // Fetch more videos when nearing the end
+                if newValue >= viewModel.videos.count - 2 {
+                    Task {
+                        LoggingService.video("Fetching next batch of videos", component: "Feed")
+                        await viewModel.fetchNextBatch()
+                    }
+                }
+            }
+        }
+        .task {
+            if viewModel.videos.isEmpty {
+                LoggingService.video("Initial video fetch", component: "Feed")
+                await viewModel.fetchVideos()
+            }
         }
         .sheet(isPresented: $showComments) {
             if let currentVideo = viewModel.videos[safe: currentIndex] {
                 CommentsView(video: currentVideo)
                     .presentationDetents([.medium, .large])
-            }
-        }
-        .task {
-            if viewModel.videos.isEmpty {
-                print("🎬 VideoFeed: Initial video fetch")
-                await viewModel.fetchVideos()
             }
         }
         .onAppear {
@@ -234,20 +253,20 @@ struct VideoFeedView: View {
             try engine?.start()
             
             engine?.resetHandler = {
-                print("🔄 Restarting Haptic engine...")
+                LoggingService.debug("Restarting Haptic engine", component: "Haptics")
                 do {
-                    try self.engine?.start()
+                    try engine?.start()
                 } catch {
-                    print("❌ Failed to restart haptic engine: \(error)")
+                    LoggingService.error("Failed to restart haptic engine: \(error.localizedDescription)", component: "Haptics")
                 }
             }
             
             engine?.stoppedHandler = { reason in
-                print("🛑 Haptic engine stopped: \(reason)")
+                LoggingService.debug("Haptic engine stopped: \(reason)", component: "Haptics")
             }
             
         } catch {
-            print("❌ Failed to create haptic engine: \(error)")
+            LoggingService.error("Failed to create haptic engine: \(error.localizedDescription)", component: "Haptics")
         }
     }
     
@@ -281,7 +300,7 @@ struct VideoFeedView: View {
     private func secondBrainButton(for video: Video) -> some View {
         VStack(spacing: 4) {
             Button(action: {
-                if let playerView = viewModel.playerViewModels[video.id] {
+                if viewModel.playerViewModels[video.id] != nil {
                     Task {
                         await saveToSecondBrain(video: video)
                     }

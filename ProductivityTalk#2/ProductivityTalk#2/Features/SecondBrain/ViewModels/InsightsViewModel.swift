@@ -241,17 +241,21 @@ class InsightsViewModel: ObservableObject {
         }
         
         // Update statistics
-        try await userRef.updateData([
+        let newQuotesCount = currentQuotes + 1
+        let newTranscriptsCount = currentTranscripts + 1
+        let updateData: [String: Any] = [
             "totalSecondBrainSaves": currentSaves + 1,
-            "totalQuotesSaved": totalQuotes,
-            "totalTranscriptsSaved": totalTranscripts,
-            "lastActiveDate": Timestamp(date: Date())
-        ])
+            "totalQuotesSaved": newQuotesCount,
+            "totalTranscriptsSaved": newTranscriptsCount,
+            "lastActiveDate": Timestamp(date: Date()),
+            "lastUpdated": Timestamp()
+        ]
+        try await userRef.updateData(updateData)
         
         print("✅ InsightsViewModel: Successfully updated user statistics")
         print("   - Total Second Brain Saves: \(currentSaves + 1)")
-        print("   - Total Quotes Saved: \(totalQuotes)")
-        print("   - Total Transcripts Saved: \(totalTranscripts)")
+        print("   - Total Quotes Saved: \(newQuotesCount)")
+        print("   - Total Transcripts Saved: \(newTranscriptsCount)")
     }
     
     func loadSavedInsights() async {

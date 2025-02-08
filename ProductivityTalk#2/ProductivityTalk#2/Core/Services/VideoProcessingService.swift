@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import UIKit
 import FirebaseStorage
+import FirebaseFirestore
 
 actor VideoProcessingService {
     static let shared = VideoProcessingService()
@@ -11,99 +12,79 @@ actor VideoProcessingService {
     
     // MARK: - Video Processing Pipeline
     func processAndUploadVideo(sourceURL: URL) async throws -> (videoURL: String, thumbnailURL: String) {
-        print("🎥 Starting video processing pipeline")
+        LoggingService.video("Starting video processing pipeline", component: "Processing")
         
-        // Step 1: Process video (crop and compress)
-        print("✂️ Starting video cropping and compression")
-        let processedVideoURL = try await cropAndCompressVideo(sourceURL: sourceURL)
-        print("✅ Video processing completed: \(processedVideoURL.path)")
+        // Generate a unique ID for the video
+        let videoId = UUID().uuidString
+        LoggingService.debug("Generated video ID: \(videoId)", component: "Processing")
         
-        // Step 2: Generate thumbnail
-        print("🖼️ Generating thumbnail")
-        let thumbnailURL = try await generateThumbnail(from: processedVideoURL)
-        print("✅ Thumbnail generated: \(thumbnailURL.path)")
-        
-        // Step 3: Upload to Firebase
-        print("☁️ Starting Firebase upload")
-        let (videoDownloadURL, thumbnailDownloadURL) = try await uploadToFirebase(
-            videoURL: processedVideoURL,
-            thumbnailURL: thumbnailURL
-        )
-        print("✅ Upload completed")
-        
-        // Step 4: Cleanup temporary files
-        try? FileManager.default.removeItem(at: processedVideoURL)
-        try? FileManager.default.removeItem(at: thumbnailURL)
-        
-        return (videoDownloadURL, thumbnailDownloadURL)
-    }
-    
-    // MARK: - Video Processing
-    private func cropAndCompressVideo(sourceURL: URL) async throws -> URL {
-        let asset = AVURLAsset(url: sourceURL)
-        
-        // Get video dimensions
-        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
-              let size = try? await track.load(.naturalSize) else {
-            throw NSError(domain: "VideoProcessing", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not get video dimensions"])
+        // Create initial Firestore document
+        guard let userId = await AuthenticationManager.shared.currentUser?.uid,
+              let username = await AuthenticationManager.shared.appUser?.username else {
+            LoggingService.error("User not authenticated", component: "Processing")
+            throw NSError(domain: "VideoProcessing", 
+                         code: -1, 
+                         userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
         }
         
-        print("📐 Original video dimensions: \(size)")
-        
-        // Calculate 9:16 crop rect
-        let targetAspectRatio: CGFloat = 9.0 / 16.0
-        let cropRect: CGRect
-        
-        if size.width / size.height > targetAspectRatio {
-            // Video is too wide - crop sides
-            let newWidth = size.height * targetAspectRatio
-            let x = (size.width - newWidth) / 2
-            cropRect = CGRect(x: x, y: 0, width: newWidth, height: size.height)
-        } else {
-            // Video is too tall - crop top/bottom
-            let newHeight = size.width / targetAspectRatio
-            let y = (size.height - newHeight) / 2
-            cropRect = CGRect(x: 0, y: y, width: size.width, height: newHeight)
-        }
-        
-        print("✂️ Applying crop rect: \(cropRect)")
-        
-        // Create composition
-        let composition = try await AVMutableVideoComposition.videoComposition(with: asset) { request in
-            let source = request.sourceImage.clampedToExtent()
-            let transform = CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y)
-            let transformedImage = source.transformed(by: transform)
-            let croppedImage = transformedImage.cropped(to: CGRect(origin: .zero, size: cropRect.size))
-            request.finish(with: croppedImage, context: nil)
-        }
-        
-        // Setup export session
-        let exportSession = AVAssetExportSession(
-            asset: asset,
-            presetName: AVAssetExportPresetMediumQuality
+        let initialVideo = Video(
+            id: videoId,
+            ownerId: userId,
+            videoURL: "",  // Will be updated after upload
+            thumbnailURL: "", // Will be updated after upload
+            title: "Processing...",
+            tags: [],
+            description: "Processing...",
+            ownerUsername: username
         )
         
-        guard let exportSession = exportSession else {
-            throw NSError(domain: "VideoProcessing", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not create export session"])
+        let firestore = Firestore.firestore()
+        
+        // Create the document first with uploading status
+        try await firestore
+            .collection("videos")
+            .document(videoId)
+            .setData(initialVideo.toFirestoreData())  // This will automatically set status to .uploading
+        
+        LoggingService.success("Created initial video document with uploading status", component: "Processing")
+        
+        do {
+            // Step 1: Upload to Firebase with progress monitoring
+            LoggingService.storage("Starting Firebase upload", component: "Upload")
+            let videoDownloadURL = try await uploadToFirebase(
+                fileURL: sourceURL,
+                path: "videos",
+                filename: "\(videoId).mp4"
+            )
+            LoggingService.success("Upload completed", component: "Upload")
+            
+            // Step 2: Update Firestore document with URL and ready status
+            try await firestore
+                .collection("videos")
+                .document(videoId)
+                .updateData([
+                    "videoURL": videoDownloadURL,
+                    "thumbnailURL": "",  // No thumbnail needed
+                    "processingStatus": VideoProcessingStatus.ready.rawValue,
+                    "updatedAt": FieldValue.serverTimestamp()
+                ])
+            
+            LoggingService.success("Updated video document with URL and ready status", component: "Processing")
+            
+            return (videoDownloadURL, "")
+        } catch {
+            // Update status to error on failure
+            try? await firestore
+                .collection("videos")
+                .document(videoId)
+                .updateData([
+                    "processingStatus": VideoProcessingStatus.error.rawValue,
+                    "processingError": error.localizedDescription
+                ])
+            
+            LoggingService.error("Processing failed: \(error.localizedDescription)", component: "Processing")
+            throw error
         }
-        
-        // Configure export
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("mp4")
-        
-        exportSession.outputURL = outputURL
-        exportSession.outputFileType = .mp4
-        exportSession.videoComposition = composition
-        
-        // Export with progress logging
-        print("🔄 Starting video export")
-        
-        // Use the new async/await API for export
-        try await exportSession.export(to: outputURL, as: .mp4)
-        print("✅ Video export completed")
-        
-        return outputURL
     }
     
     // MARK: - Thumbnail Generation
@@ -112,44 +93,81 @@ actor VideoProcessingService {
         let imageGenerator = AVAssetImageGenerator(asset: asset)
         imageGenerator.appliesPreferredTrackTransform = true
         
-        // Generate thumbnail from first frame
-        let cgImage = try await imageGenerator.image(at: .zero).image
+        // Configure for high quality
+        imageGenerator.maximumSize = CGSize(width: 1080, height: 1920)
         
-        // Convert to JPEG data
-        guard let thumbnailData = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.7) else {
-            throw NSError(domain: "VideoProcessing", code: 5, userInfo: [NSLocalizedDescriptionKey: "Could not generate thumbnail"])
+        // Get thumbnail from first frame
+        let time = CMTime(seconds: 0.1, preferredTimescale: 600)
+        let cgImage = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CGImage, Error>) in
+            imageGenerator.generateCGImageAsynchronously(for: time) { cgImage, actualTime, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else if let cgImage = cgImage {
+                    continuation.resume(returning: cgImage)
+                } else {
+                    continuation.resume(throwing: NSError(domain: "VideoProcessing", 
+                                                        code: -1, 
+                                                        userInfo: [NSLocalizedDescriptionKey: "Failed to generate thumbnail"]))
+                }
+            }
         }
         
-        // Save to temporary file
+        // Convert to JPEG
+        let uiImage = UIImage(cgImage: cgImage)
+        let thumbnailData = uiImage.jpegData(compressionQuality: 0.8)
+        
+        // Save to temp file
         let thumbnailURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("jpg")
         
-        try thumbnailData.write(to: thumbnailURL)
+        try thumbnailData?.write(to: thumbnailURL)
+        LoggingService.success("Generated thumbnail at: \(thumbnailURL.path)", component: "Processing")
+        
         return thumbnailURL
     }
     
     // MARK: - Firebase Upload
-    private func uploadToFirebase(videoURL: URL, thumbnailURL: URL) async throws -> (String, String) {
-        async let videoTask = uploadFile(videoURL, to: "videos")
-        async let thumbnailTask = uploadFile(thumbnailURL, to: "thumbnails")
-        
-        return try await (videoTask, thumbnailTask)
-    }
-    
-    private func uploadFile(_ fileURL: URL, to path: String) async throws -> String {
-        let filename = "\(UUID().uuidString)_\(fileURL.lastPathComponent)"
-        let storageRef = storage.reference().child("\(path)/\(filename)")
-        
-        print("📤 Starting upload to Firebase: \(filename)")
+    private func uploadToFirebase(fileURL: URL, path: String, filename: String? = nil) async throws -> String {
+        let actualFilename = filename ?? "\(UUID().uuidString)_\(fileURL.lastPathComponent)"
+        let storageRef = storage.reference().child("\(path)/\(actualFilename)")
         
         let metadata = StorageMetadata()
         metadata.contentType = path == "videos" ? "video/mp4" : "image/jpeg"
         
-        _ = try await storageRef.putFileAsync(from: fileURL, metadata: metadata)
-        let downloadURL = try await storageRef.downloadURL()
-        
-        print("✅ Upload completed: \(downloadURL.absoluteString)")
-        return downloadURL.absoluteString
+        return try await withCheckedThrowingContinuation { continuation in
+            let uploadTask = storageRef.putFile(from: fileURL, metadata: metadata)
+            var lastReportedProgress: Int = -1
+            
+            // Monitor progress
+            uploadTask.observe(.progress) { snapshot in
+                let percentComplete = Int(100.0 * Double(snapshot.progress?.completedUnitCount ?? 0) / Double(snapshot.progress?.totalUnitCount ?? 1))
+                if percentComplete % 10 == 0 && percentComplete != lastReportedProgress {
+                    let fileType = path == "videos" ? "Video" : "Thumbnail"
+                    LoggingService.progress("\(fileType) upload", progress: Double(percentComplete) / 100.0, id: actualFilename)
+                    lastReportedProgress = percentComplete
+                }
+            }
+            
+            // Monitor completion
+            uploadTask.observe(.success) { _ in
+                // Use a detached task to avoid actor reentrancy
+                Task.detached {
+                    do {
+                        let downloadURL = try await storageRef.downloadURL()
+                        continuation.resume(returning: downloadURL.absoluteString)
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+            
+            // Monitor failure
+            uploadTask.observe(.failure) { snapshot in
+                if let error = snapshot.error {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 } 

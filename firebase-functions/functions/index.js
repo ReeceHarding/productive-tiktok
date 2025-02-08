@@ -53,12 +53,12 @@ exports.processVideo = onObjectFinalized({
     });
     console.log(`Updated video ${videoId} status to processing`);
 
-    // Download video to temp
+    // Download video to temp for audio extraction
     const tempFilePath = path.join(os.tmpdir(), fileName);
     await bucket.file(filePath).download({destination: tempFilePath});
     console.log("Downloaded video to:", tempFilePath);
 
-    // Extract audio for transcription
+    // Extract audio for transcription (no video processing needed)
     const audioPath = path.join(os.tmpdir(), `${videoId}.mp3`);
     await new Promise((resolve, reject) => {
       ffmpeg(tempFilePath)

@@ -3,148 +3,289 @@ import AVKit
 import FirebaseFirestore
 import FirebaseAuth
 import Combine
+import AVFoundation
 
 @MainActor
-class VideoPlayerViewModel: ObservableObject {
-    private let video: Video
-    @Published var player: AVPlayer?
-    @Published private(set) var isLiked = false
-    @Published private(set) var isSaved = false
-    @Published private(set) var playerStatus: String = "unknown"
-    @Published private(set) var playerError: String?
+class VideoPlayerViewModel: NSObject, ObservableObject {
+    @Published var video: Video
+    @Published var isPlaying = false
+    @Published var isMuted = false
+    @Published var isLiked = false
+    @Published var isSaved = false
+    @Published var playerError: String?
     @Published var isInSecondBrain = false
+    @Published private(set) var saveCount: Int
+    @Published var isProcessing: Bool
     
-    private let firestore = Firestore.firestore()
+    @Published private(set) var player: AVPlayer?
     private var timeObserver: Any?
     private var statusObserver: NSKeyValueObservation?
     private var errorObserver: NSKeyValueObservation?
+    private let firestore = Firestore.firestore()
+    private var cleanupTask: Task<Void, Never>?
+    private var processingStatusListener: ListenerRegistration?
     
     init(video: Video) {
         self.video = video
-        print("📱 VideoPlayer: Initialized for video ID: \(video.id)")
+        self.saveCount = video.saveCount
+        self.isProcessing = video.processingStatus != .ready
+        super.init()
+        LoggingService.video("Initialized player for video \(video.id)", component: "Player")
+        setupProcessingStatusListener()
         setupPlayer()
         checkInteractionStatus()
     }
     
+    deinit {
+        // Use a weak reference to self in the cleanup task
+        cleanupTask = Task { [weak self] in
+            await self?.cleanup()
+        }
+        processingStatusListener?.remove()
+    }
+    
+    private func setupProcessingStatusListener() {
+        LoggingService.video("Setting up processing status listener for video \(video.id)", component: "Player")
+        LoggingService.debug("Initial processing status: \(video.processingStatus.rawValue)", component: "Player")
+        LoggingService.debug("Initial isProcessing value: \(isProcessing)", component: "Player")
+        LoggingService.debug("Initial player state: \(String(describing: player))", component: "Player")
+        
+        processingStatusListener = firestore.collection("videos")
+            .document(self.video.id)
+            .addSnapshotListener { [weak self] documentSnapshot, error in
+                guard let self = self else {
+                    LoggingService.error("Self was deallocated in status listener", component: "Player")
+                    return
+                }
+                
+                if let error = error {
+                    LoggingService.error("Error listening to processing status: \(error.localizedDescription)", component: "Player")
+                    return
+                }
+                
+                guard let document = documentSnapshot else {
+                    LoggingService.error("No document snapshot in status listener", component: "Player")
+                    return
+                }
+                
+                LoggingService.debug("Received document update for video \(self.video.id)", component: "Player")
+                LoggingService.debug("Document exists: \(document.exists)", component: "Player")
+                
+                guard let data = document.data(),
+                      let statusRaw = data["processingStatus"] as? String,
+                      let status = VideoProcessingStatus(rawValue: statusRaw) else {
+                    LoggingService.error("Invalid processing status data for video \(self.video.id)", component: "Player")
+                    LoggingService.debug("Document data: \(String(describing: document.data()))", component: "Player")
+                    return
+                }
+                
+                Task { @MainActor in
+                    let wasProcessing = self.isProcessing
+                    let oldStatus = self.video.processingStatus
+                    
+                    // Update video object with new status
+                    self.video.processingStatus = status
+                    
+                    // Update isProcessing based on status
+                    self.isProcessing = status != .ready
+                    
+                    LoggingService.video("Processing status changed for video \(self.video.id)", component: "Player")
+                    LoggingService.debug("- Old status: \(oldStatus.rawValue)", component: "Player")
+                    LoggingService.debug("- New status: \(status.rawValue)", component: "Player")
+                    LoggingService.debug("- Was processing: \(wasProcessing)", component: "Player")
+                    LoggingService.debug("- Is processing: \(self.isProcessing)", component: "Player")
+                    
+                    // If transitioning from processing to ready, ensure player is set up
+                    if wasProcessing && !self.isProcessing {
+                        LoggingService.video("🎬 Video ready - setting up player", component: "Player")
+                        self.setupPlayer()
+                    }
+                }
+            }
+    }
+    
+    private func cleanup() {
+        LoggingService.video("Starting cleanup for video \(video.id)", component: "Player")
+        // Remove observers first
+        if let timeObserver = timeObserver {
+            player?.removeTimeObserver(timeObserver)
+            self.timeObserver = nil
+        }
+        
+        statusObserver?.invalidate()
+        statusObserver = nil
+        
+        // Stop and remove player
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        player = nil
+        
+        // Deactivate audio session
+        try? AVAudioSession.sharedInstance().setActive(false)
+        
+        LoggingService.debug("Cleaned up player resources for video \(video.id)", component: "Player")
+    }
+    
     func setupPlayer() {
-        guard let url = URL(string: video.videoURL) else {
-            print("❌ VideoPlayer: Invalid video URL")
+        // Skip setup if we have no URL
+        if video.videoURL.isEmpty {
+            LoggingService.debug("🔍 Skipping player setup - no URL available", component: "Player")
             return
         }
         
-        print("🎬 VideoPlayer: Setting up player for URL: \(url)")
-        let player = AVPlayer(url: url)
-        player.automaticallyWaitsToMinimizeStalling = true
+        LoggingService.video("🎬 Starting player setup for video \(video.id)", component: "Player")
+        LoggingService.debug("Video URL: \(video.videoURL)", component: "Player")
         
-        // Configure for looping
-        print("🔄 VideoPlayer: Configuring video to loop")
-        player.actionAtItemEnd = .none
+        // Clean up old player first
+        cleanup()
         
-        // Add periodic time observer
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC)), queue: .main) { [weak self] time in
-            guard let _ = self else { return }
+        // Simple audio session configuration for video playback
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback)  // Simple playback category
+            try session.setActive(true)
+            LoggingService.debug("🔊 Audio enabled for video playback", component: "Player")
+        } catch {
+            LoggingService.error("🔇 Audio configuration failed: \(error.localizedDescription)", component: "Player")
+        }
+
+        guard let videoURL = URL(string: video.videoURL) else {
+            LoggingService.error("❌ Invalid video URL for \(video.id): \(video.videoURL)", component: "Player")
+            return
         }
         
-        // Observe player status
-        statusObserver = player.observe(\.status, options: [.new, .initial]) { [weak self] player, _ in
-            Task { @MainActor in
-                switch player.status {
-                case .readyToPlay:
-                    print("✅ VideoPlayer: Player ready to play")
-                    self?.playerStatus = "ready"
-                case .failed:
-                    let error = player.error?.localizedDescription ?? "Unknown error"
-                    print("❌ VideoPlayer: Player failed - \(error)")
-                    self?.playerStatus = "failed"
-                    self?.playerError = error
-                case .unknown:
-                    print("⚠️ VideoPlayer: Player status unknown")
-                    self?.playerStatus = "unknown"
-                @unknown default:
-                    print("⚠️ VideoPlayer: Player status - unexpected value")
-                    self?.playerStatus = "unexpected"
+        LoggingService.debug("📼 Creating player with URL: \(videoURL.absoluteString)", component: "Player")
+        
+        // Create new player with the video asset
+        let asset = AVURLAsset(url: videoURL)
+        
+        // Load asset keys asynchronously before creating player item
+        Task {
+            do {
+                // Load essential properties
+                try await asset.load(.isPlayable)
+                
+                guard asset.isPlayable else {
+                    LoggingService.error("❌ Asset is not playable for video \(video.id)", component: "Player")
+                    await MainActor.run {
+                        self.playerError = "Video cannot be played"
+                    }
+                    return
+                }
+                
+                await MainActor.run {
+                    let playerItem = AVPlayerItem(asset: asset)
+                    let newPlayer = AVPlayer(playerItem: playerItem)
+                    
+                    // Enable audio playback
+                    newPlayer.volume = isMuted ? 0 : 1
+                    
+                    // Configure for looping
+                    newPlayer.actionAtItemEnd = .none
+                    
+                    // Set new player
+                    self.player = newPlayer
+                    
+                    // Add item status observer
+                    self.statusObserver = playerItem.observe(\.status) { [weak self] item, _ in
+                        guard let self = self else { return }
+                        
+                        Task { @MainActor in
+                            switch item.status {
+                            case .readyToPlay:
+                                LoggingService.success("✅ PlayerItem ready to play", component: "Player")
+                                if !self.isPlaying {
+                                    self.player?.play()
+                                    self.player?.rate = 1.0
+                                    self.isPlaying = true
+                                    LoggingService.debug("Started playback with audio", component: "Player")
+                                }
+                            case .failed:
+                                if let error = item.error {
+                                    LoggingService.error("❌ PlayerItem failed: \(error.localizedDescription)", component: "Player")
+                                    self.playerError = error.localizedDescription
+                                }
+                            case .unknown:
+                                LoggingService.debug("⚠️ PlayerItem status unknown", component: "Player")
+                            @unknown default:
+                                break
+                            }
+                        }
+                    }
+                    
+                    // Add notification observer for looping
+                    NotificationCenter.default.addObserver(
+                        self,
+                        selector: #selector(self.playerItemDidReachEnd),
+                        name: .AVPlayerItemDidPlayToEndTime,
+                        object: playerItem
+                    )
+                    
+                    // Start playback
+                    newPlayer.play()
+                    newPlayer.rate = 1.0
+                    self.isPlaying = true
+                    LoggingService.success("▶️ Started playback with audio enabled", component: "Player")
+                }
+            } catch {
+                LoggingService.error("❌ Failed to load asset: \(error.localizedDescription)", component: "Player")
+                await MainActor.run {
+                    self.playerError = error.localizedDescription
                 }
             }
         }
-        
-        // Observe player errors
-        errorObserver = player.observe(\.error, options: [.new]) { [weak self] player, _ in
-            if let error = player.error {
-                Task { @MainActor in
-                    print("❌ VideoPlayer: Player error - \(error.localizedDescription)")
-                    self?.playerError = error.localizedDescription
-                }
-            }
-        }
-        
-        // Add notification observers for playback issues
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(playerItemDidPlayToEndTime),
-            name: .AVPlayerItemDidPlayToEndTime,
-            object: player.currentItem
-        )
-        
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(playerItemFailedToPlayToEndTime),
-            name: .AVPlayerItemFailedToPlayToEndTime,
-            object: player.currentItem
-        )
-        
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(playerItemPlaybackStalled),
-            name: .AVPlayerItemPlaybackStalled,
-            object: player.currentItem
-        )
-        
-        // Configure AVPlayerItem
-        if let playerItem = player.currentItem {
-            print("📊 VideoPlayer: Buffer full duration: \(playerItem.duration.seconds) seconds")
-            print("📊 VideoPlayer: Playback buffer full: \(playerItem.isPlaybackBufferFull)")
-            print("📊 VideoPlayer: Playback buffer empty: \(playerItem.isPlaybackBufferEmpty)")
-            print("📊 VideoPlayer: Playback likely to keep up: \(playerItem.isPlaybackLikelyToKeepUp)")
-        }
-        
-        self.player = player
-        
-        // Start playing
-        player.play()
     }
     
-    @objc private func playerItemDidPlayToEndTime() {
+    private func setupRateObserver(for player: AVPlayer) {
+        LoggingService.debug("Setting up rate observer for player", component: "Player")
+        
+        // Remove any existing rate observer
+        if let timeObserver = timeObserver {
+            player.removeTimeObserver(timeObserver)
+            self.timeObserver = nil
+        }
+        
+        // Add new rate observer using modern KVO
+        let rateObserver = player.observe(\.rate, options: [.new, .old]) { [weak self] player, change in
+            guard let self = self,
+                  let newRate = change.newValue,
+                  let oldRate = change.oldValue else { return }
+            
+            Task { @MainActor in
+                LoggingService.debug("🎮 Playback rate changed: \(oldRate) -> \(newRate)", component: "Player")
+                
+                if newRate == 0 && self.isPlaying {
+                    LoggingService.debug("⚠️ Playback stopped unexpectedly, forcing resume", component: "Player")
+                    player.play()
+                    player.rate = 1.0
+                }
+            }
+        }
+        
+        // Store the observer to prevent it from being deallocated
+        statusObserver = rateObserver
+    }
+    
+    @objc private func playerItemDidReachEnd() {
+        LoggingService.debug("Video reached end, looping playback", component: "Player")
         player?.seek(to: .zero)
         player?.play()
+        isPlaying = true
     }
     
-    @objc private func playerItemFailedToPlayToEndTime(_ notification: Notification) {
-        if let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error {
-            print("❌ VideoPlayer: Failed to play to end - \(error.localizedDescription)")
-            self.playerError = error.localizedDescription
+    func togglePlayback() {
+        if isPlaying {
+            player?.pause()
+        } else {
+            player?.play()
         }
+        isPlaying.toggle()
     }
     
-    @objc private func playerItemPlaybackStalled(_ notification: Notification) {
-        print("⚠️ VideoPlayer: Playback stalled")
-        // Try to recover by seeking slightly ahead
-        if let player = self.player, let currentTime = player.currentItem?.currentTime() {
-            let newTime = CMTimeAdd(currentTime, CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC)))
-            player.seek(to: newTime)
-            player.play()
-        }
-    }
-    
-    func cleanup() {
-        print("🧹 VideoPlayer: Cleaning up resources")
-        if let timeObserver = timeObserver {
-            player?.removeTimeObserver(timeObserver)
-        }
-        statusObserver?.invalidate()
-        errorObserver?.invalidate()
-        NotificationCenter.default.removeObserver(self)
-        player?.pause()
-        player = nil
+    func toggleMute() {
+        isMuted.toggle()
+        player?.volume = isMuted ? 0 : 1
+        LoggingService.debug("Audio \(isMuted ? "muted" : "unmuted")", component: "Player")
     }
     
     func checkInteractionStatus() {
@@ -190,6 +331,15 @@ class VideoPlayerViewModel: ObservableObject {
         }
         
         // Check Second Brain status
+        checkSecondBrainStatus()
+    }
+    
+    private func checkSecondBrainStatus() {
+        guard let userId = AuthenticationManager.shared.currentUser?.uid else {
+            LoggingService.error("No authenticated user", component: "Player")
+            return
+        }
+        
         Task {
             do {
                 let secondBrainQuery = try await firestore.collection("users")
@@ -202,173 +352,106 @@ class VideoPlayerViewModel: ObservableObject {
                 await MainActor.run {
                     self.isInSecondBrain = !secondBrainQuery.documents.isEmpty
                 }
-                print("✅ VideoPlayer: Second Brain status checked - isInSecondBrain: \(self.isInSecondBrain)")
+                LoggingService.debug("Second Brain status checked - isInSecondBrain: \(self.isInSecondBrain)", component: "Player")
             } catch {
-                print("❌ VideoPlayer: Error checking Second Brain status: \(error.localizedDescription)")
+                LoggingService.error("Error checking Second Brain status: \(error.localizedDescription)", component: "Player")
             }
         }
     }
     
-    func toggleLike() {
-        guard let userId = AuthenticationManager.shared.currentUser?.uid else {
-            print("❌ VideoPlayer: No authenticated user")
-            return
-        }
-        
-        let videoRef = firestore.collection("videos").document(video.id)
-        let likeRef = videoRef.collection("likes").document(userId)
-        
-        Task {
-            do {
-                _ = try await firestore.runTransaction({ (transaction, errorPointer) -> Any? in
-                    let videoDoc: DocumentSnapshot
-                    do {
-                        videoDoc = try transaction.getDocument(videoRef)
-                    } catch let fetchError as NSError {
-                        errorPointer?.pointee = fetchError
-                        print("❌ VideoPlayer: Failed to fetch video document in like transaction: \(fetchError)")
-                        return nil
-                    }
-                    
-                    let currentLikes = videoDoc.data()?["likeCount"] as? Int ?? 0
-                    
-                    if self.isLiked {
-                        // Unlike
-                        transaction.deleteDocument(likeRef)
-                        transaction.updateData(["likeCount": currentLikes - 1], forDocument: videoRef)
-                        print("👎 VideoPlayer: Removed like")
-                    } else {
-                        // Like
-                        transaction.setData([:], forDocument: likeRef)
-                        transaction.updateData(["likeCount": currentLikes + 1], forDocument: videoRef)
-                        print("👍 VideoPlayer: Added like")
-                    }
-                    
-                    return nil
-                })
-                
-                // Update UI
-                isLiked.toggle()
-            } catch {
-                print("❌ VideoPlayer: Error toggling like: \(error.localizedDescription)")
-            }
+    func toggleLike() async {
+        do {
+            isLiked.toggle()
+            let newLikeCount = isLiked ? video.likeCount + 1 : video.likeCount - 1
+            
+            // Create a Sendable dictionary
+            let updateData: [String: Any] = ["likeCount": newLikeCount]
+            
+            try await firestore.collection("videos").document(video.id).updateData(updateData)
+            
+            video.likeCount = newLikeCount
+            LoggingService.success("Updated like status for video \(video.id)", component: "Player")
+        } catch {
+            isLiked.toggle() // Revert on failure
+            LoggingService.error("Failed to toggle like: \(error.localizedDescription)", component: "Player")
         }
     }
     
-    func toggleSave() {
-        guard let userId = AuthenticationManager.shared.currentUser?.uid else {
-            print("❌ VideoPlayer: No authenticated user")
-            return
-        }
-        
-        let videoRef = firestore.collection("videos").document(video.id)
-        let saveRef = firestore
-            .collection("users")
-            .document(userId)
-            .collection("savedVideos")
-            .document(video.id)
-        
-        Task {
-            do {
-                _ = try await firestore.runTransaction({ (transaction, errorPointer) -> Any? in
-                    let videoDoc: DocumentSnapshot
-                    do {
-                        videoDoc = try transaction.getDocument(videoRef)
-                    } catch let fetchError as NSError {
-                        errorPointer?.pointee = fetchError
-                        print("❌ VideoPlayer: Failed to fetch video document in save transaction: \(fetchError)")
-                        return nil
-                    }
-                    
-                    let currentSaves = videoDoc.data()?["saveCount"] as? Int ?? 0
-                    
-                    if self.isSaved {
-                        // Unsave
-                        transaction.deleteDocument(saveRef)
-                        transaction.updateData(["saveCount": currentSaves - 1], forDocument: videoRef)
-                        print("🗑️ VideoPlayer: Removed from saved")
-                    } else {
-                        // Save
-                        transaction.setData([:], forDocument: saveRef)
-                        transaction.updateData(["saveCount": currentSaves + 1], forDocument: videoRef)
-                        print("💾 VideoPlayer: Added to saved")
-                    }
-                    
-                    return nil
-                })
-                
-                // Update UI
-                isSaved.toggle()
-            } catch {
-                print("❌ VideoPlayer: Error toggling save: \(error.localizedDescription)")
-            }
+    func toggleSave() async {
+        do {
+            isSaved.toggle()
+            let newSaveCount = isSaved ? video.saveCount + 1 : video.saveCount - 1
+            
+            // Create a Sendable dictionary
+            let updateData: [String: Any] = ["saveCount": newSaveCount]
+            
+            try await firestore.collection("videos").document(video.id).updateData(updateData)
+            
+            video.saveCount = newSaveCount
+            LoggingService.success("Updated save status for video \(video.id)", component: "Player")
+        } catch {
+            isSaved.toggle() // Revert on failure
+            LoggingService.error("Failed to toggle save: \(error.localizedDescription)", component: "Player")
         }
     }
     
     func saveToSecondBrain() async throws {
-        print("🧠 VideoPlayer: Starting Second Brain save process...")
-        print("📊 VideoPlayer: Current video details - ID: \(video.id), Title: \(video.title)")
-        print("🔄 VideoPlayer: Processing status: \(video.processingStatus.rawValue)")
-        
         guard let userId = AuthenticationManager.shared.currentUser?.uid else {
-            print("❌ VideoPlayer: Save failed - No authenticated user")
-            throw NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
-        }
-        print("👤 VideoPlayer: User authenticated - ID: \(userId)")
-        
-        guard let transcript = video.transcript, !transcript.isEmpty else {
-            print("❌ VideoPlayer: Save failed - No transcript available for video: \(video.id)")
-            throw NSError(domain: "VideoPlayer", code: -2, userInfo: [NSLocalizedDescriptionKey: "Video transcript not available yet"])
-        }
-        print("📝 VideoPlayer: Transcript available - Length: \(transcript.count) characters")
-        
-        // Add validation for quotes
-        guard video.processingStatus == .ready else {
-            print("❌ VideoPlayer: Save failed - Video still processing: \(video.processingStatus.rawValue)")
-            throw NSError(domain: "VideoPlayer", code: -3, userInfo: [NSLocalizedDescriptionKey: "Video is still being processed. Please wait for quote extraction to complete."])
+            throw NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "No authenticated user"])
         }
         
-        guard let extractedQuotes = video.extractedQuotes, !extractedQuotes.isEmpty else {
-            print("❌ VideoPlayer: Save failed - No quotes extracted for video: \(video.id)")
-            throw NSError(domain: "VideoPlayer", code: -4, userInfo: [NSLocalizedDescriptionKey: "No quotes have been extracted from this video yet"])
-        }
-        print("💭 VideoPlayer: Extracted quotes available - Count: \(extractedQuotes.count)")
+        LoggingService.video("Saving video to Second Brain", component: "Player")
         
-        let entryId = UUID().uuidString
-        print("🔑 VideoPlayer: Generated entry ID: \(entryId)")
+        let secondBrainRef = firestore.collection("users")
+            .document(userId)
+            .collection("secondBrain")
+            .document()
         
-        let secondBrain = SecondBrain(
-            id: entryId,
-            userId: userId,
-            videoId: video.id,
-            transcript: transcript,
-            quotes: extractedQuotes,
-            videoTitle: video.title,
-            videoThumbnailURL: video.thumbnailURL
-        )
-        
-        print("📦 VideoPlayer: Created Second Brain entry:")
-        print("   - Entry ID: \(entryId)")
-        print("   - Video ID: \(video.id)")
-        print("   - Video Title: \(video.title)")
-        print("   - Quotes Count: \(extractedQuotes.count)")
+        let data: [String: Any] = [
+            "videoId": video.id,
+            "title": video.title,
+            "description": video.description,
+            "thumbnailURL": video.thumbnailURL,
+            "videoURL": video.videoURL,
+            "transcript": video.transcript ?? "",
+            "extractedQuotes": video.extractedQuotes ?? [],
+            "createdAt": Timestamp(),
+            "tags": video.tags
+        ]
         
         do {
-            print("💾 VideoPlayer: Attempting to save to Firestore...")
-            try await firestore
-                .collection("users")
-                .document(userId)
-                .collection("secondBrain")
-                .document(entryId)
-                .setData(secondBrain.toFirestoreData())
+            // First, check if the video document exists
+            let videoDoc = try await firestore.collection("videos").document(video.id).getDocument()
             
-            print("✅ VideoPlayer: Successfully saved to Second Brain")
-            print("   - Collection: users/\(userId)/secondBrain")
-            print("   - Document: \(entryId)")
+            if !videoDoc.exists {
+                LoggingService.error("Video document does not exist: \(video.id)", component: "Player")
+                throw NSError(domain: "VideoPlayer", 
+                            code: -2, 
+                            userInfo: [NSLocalizedDescriptionKey: "Video no longer exists"])
+            }
+            
+            // Start a batch write to ensure atomicity
+            let batch = firestore.batch()
+            
+            // Add to Second Brain
+            batch.setData(data, forDocument: secondBrainRef)
+            
+            // Update video save count
+            batch.updateData([
+                "saveCount": FieldValue.increment(Int64(1))
+            ], forDocument: firestore.collection("videos").document(video.id))
+            
+            // Commit the batch
+            try await batch.commit()
+            
+            await MainActor.run {
+                self.isInSecondBrain = true
+                self.video.saveCount += 1
+            }
+            
+            LoggingService.success("Successfully saved video to Second Brain", component: "Player")
         } catch {
-            print("❌ VideoPlayer: Firestore save failed")
-            print("   - Error: \(error.localizedDescription)")
-            print("   - Collection path: users/\(userId)/secondBrain")
+            LoggingService.error("Failed to save to Second Brain: \(error.localizedDescription)", component: "Player")
             throw error
         }
     }
@@ -394,5 +477,16 @@ class VideoPlayerViewModel: ObservableObject {
                 rootViewController.present(activityVC, animated: true)
             }
         }
+    }
+    
+    func updateSaveCount(increment: Bool) {
+        if increment {
+            saveCount += 1
+            isInSecondBrain = true
+        } else {
+            saveCount -= 1
+            isInSecondBrain = false
+        }
+        video.saveCount = saveCount
     }
 } 

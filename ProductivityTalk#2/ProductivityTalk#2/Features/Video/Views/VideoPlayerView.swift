@@ -5,206 +5,236 @@ import FirebaseFirestore
 struct VideoPlayerView: View {
     let video: Video
     @StateObject private var viewModel: VideoPlayerViewModel
-    @State private var showComments = false
-    @State private var dragOffset: CGFloat = 0
-    @State private var showSaveConfirmation = false
-    @State private var showSaveError = false
-    @State private var errorMessage = ""
-    @State private var isAppearing = false
     @Environment(\.scenePhase) private var scenePhase
-    @State private var isAddingToSecondBrain = false
-    @State private var brainScale: CGFloat = 1.0
-    @State private var brainRotation: Double = 0.0
+    @State private var showComments = false
+    @State private var showShareSheet = false
+    @State private var isOverlayVisible = true
+    @State private var showBrainAnimation = false
+    @State private var brainAnimationPosition: CGPoint = .zero
+    @State private var errorMessage: String?
+    @State private var showError = false
     
-    // Animation properties
-    private let appearAnimation = Animation.spring(response: 0.6, dampingFraction: 0.8)
-    private let contentAnimation = Animation.easeInOut(duration: 0.3)
+    // Simple animation for video appearance
+    @State private var isAppearing = false
+    private let appearAnimation = Animation.easeOut(duration: 0.3)
     
     init(video: Video) {
         self.video = video
         self._viewModel = StateObject(wrappedValue: VideoPlayerViewModel(video: video))
+        LoggingService.video("Initializing VideoPlayerView for video: \(video.id)", component: "UI")
     }
     
     var body: some View {
-        ZStack {
-            if let player = viewModel.player {
-                CustomVideoPlayer(player: player)
-                    .edgesIgnoringSafeArea(.all)
-                    .opacity(isAppearing ? 1 : 0)
-                    .onAppear {
-                        withAnimation(appearAnimation) {
+        GeometryReader { geometry in
+            ZStack {
+                if let error = viewModel.playerError {
+                    errorView(error)
+                } else if let player = viewModel.player {
+                    CustomVideoPlayer(player: player)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .opacity(isAppearing ? 1 : 0)
+                        .animation(.easeOut(duration: 0.3), value: isAppearing)
+                        .transition(.opacity.animation(.easeInOut(duration: 0.3)))
+                        .task {
+                            LoggingService.video("🎬 VideoPlayer task started for video: \(video.id)", component: "UI")
                             isAppearing = true
                         }
-                        print("▶️ VideoPlayer: Starting playback for video: \(video.id)")
-                        player.play()
-                    }
-                    .onDisappear {
-                        withAnimation(appearAnimation) {
-                            isAppearing = false
+                        .onAppear {
+                            LoggingService.video("👀 VideoPlayer appeared for video: \(video.id)", component: "UI")
                         }
-                        print("⏸️ VideoPlayer: Pausing playback for video: \(video.id)")
-                        player.pause()
-                    }
-                
-                // Video Controls Overlay with improved animations
-                VStack {
-                    Spacer()
-                    
-                    HStack {
-                        // Video Information with fade animation
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(video.title)
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .opacity(isAppearing ? 1 : 0)
-                                .animation(contentAnimation.delay(0.2), value: isAppearing)
-                            
-                            Text(video.description)
-                                .font(.subheadline)
-                                .foregroundColor(.white.opacity(0.8))
-                                .lineLimit(2)
-                                .opacity(isAppearing ? 1 : 0)
-                                .animation(contentAnimation.delay(0.3), value: isAppearing)
-                        }
-                        .padding()
-                        
-                        Spacer()
-                        
-                        // Right side buttons
-                        VStack(spacing: 24) {
-                            brainButton(for: video)  // New brain button
-                            
-                            // Comments Button
-                            VStack(spacing: 4) {
-                                Button(action: { showComments = true }) {
-                                    Image(systemName: "bubble.right")
-                                        .font(.system(size: 30))
-                                        .foregroundColor(.white)
-                                }
-                                .opacity(isAppearing ? 1 : 0)
-                                .animation(contentAnimation.delay(0.6), value: isAppearing)
-                                
-                                Text(formatCount(video.commentCount))
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(.white)
+                        .onDisappear {
+                            LoggingService.video("🔄 VideoPlayer disappeared for video: \(video.id)", component: "UI")
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                isAppearing = false
                             }
-                            
-                            // Share Button
-                            VStack(spacing: 4) {
-                                Button {
-                                    viewModel.shareVideo()
-                                } label: {
-                                    Image(systemName: "square.and.arrow.up")
-                                        .font(.system(size: 30))
-                                        .foregroundColor(.white)
-                                }
-                                .opacity(isAppearing ? 1 : 0)
-                                .animation(contentAnimation.delay(0.7), value: isAppearing)
-                                
-                                Text("Share")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(.white)
+                            viewModel.player?.pause()
+                            viewModel.isPlaying = false
+                        }
+                        .onTapGesture {
+                            withAnimation {
+                                isOverlayVisible.toggle()
                             }
                         }
-                        .padding(.trailing)
-                        .padding(.bottom, 50)
+                } else {
+                    // Show loading state
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(1.5)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black)
+                }
+
+                // Video controls overlay
+                if isOverlayVisible {
+                    videoControlsOverlay
+                        .transition(.opacity)
+                }
+            }
+            .onChange(of: scenePhase) { newPhase in
+                if newPhase == .active {
+                    if viewModel.isPlaying {
+                        viewModel.player?.play()
                     }
-                    .background(
-                        LinearGradient(
-                            gradient: Gradient(colors: [.clear, .black.opacity(0.5)]),
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                } else {
+                    viewModel.player?.pause()
                 }
-            } else {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    .scaleEffect(1.5)
             }
-            
-            // Save Confirmation Overlay
-            if showSaveConfirmation {
-                VStack {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 40))
-                        .foregroundColor(.green)
-                    Text("Saved to Second Brain!")
-                        .foregroundColor(.white)
-                        .font(.headline)
-                }
-                .padding()
-                .background(Color.black.opacity(0.7))
-                .cornerRadius(12)
-                .transition(.scale.combined(with: .opacity))
-            }
-            
-            // Error Overlay
-            if showSaveError {
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.circle")
-                        .font(.system(size: 30))
-                        .foregroundColor(.red)
-                    Text("Failed to Save")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    Text(errorMessage)
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                        .multilineTextAlignment(.center)
-                }
-                .padding()
-                .background(Color.black.opacity(0.7))
-                .cornerRadius(12)
-                .transition(.scale.combined(with: .opacity))
-                .padding(.horizontal)
-            }
-            
-            // Swipe Indicator
-            if dragOffset > 0 {
-                HStack(spacing: 12) {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 30))
-                    Text("Keep swiping to save")
-                        .font(.headline)
-                }
-                .foregroundColor(.white)
-                .padding()
-                .background(Color.black.opacity(0.7))
-                .cornerRadius(12)
-                .scaleEffect(min(1.0, dragOffset / 100))
-                .opacity(min(1.0, dragOffset / 100))
-            }
-        }
-        .onAppear {
-            viewModel.setupPlayer()
-            viewModel.checkInteractionStatus()
-        }
-        .onDisappear {
-            viewModel.cleanup()
         }
         .sheet(isPresented: $showComments) {
             CommentsView(video: video)
                 .presentationDetents([.medium, .large])
         }
-        .onChange(of: scenePhase) { oldPhase, newPhase in
-            switch newPhase {
-            case .active:
-                print("📱 VideoPlayer: App became active - resuming playback")
-                withAnimation(appearAnimation) {
-                    isAppearing = true
-                }
-                viewModel.player?.play()
-            case .inactive, .background:
-                print("📱 VideoPlayer: App became inactive/background - pausing playback")
-                withAnimation(appearAnimation) {
-                    isAppearing = false
-                }
-                viewModel.player?.pause()
-            @unknown default:
-                break
+        .sheet(isPresented: $showShareSheet) {
+            if let url = URL(string: video.videoURL) {
+                ShareSheet(items: [url])
             }
         }
+        .alert("Error", isPresented: $showError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(errorMessage ?? "An unknown error occurred")
+        }
+    }
+    
+    private func errorView(_ error: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 50))
+                .foregroundColor(.red)
+            
+            Text(error)
+                .font(.headline)
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)
+    }
+    
+    private var videoControlsOverlay: some View {
+        HStack {
+            Spacer()
+            VStack(spacing: 20) {
+                Spacer()
+                
+                // Brain Button
+                Button {
+                    Task {
+                        // Optimistically update the counter
+                        if !viewModel.isInSecondBrain {
+                            withAnimation {
+                                viewModel.updateSaveCount(increment: true)
+                            }
+                        }
+                        
+                        do {
+                            try await viewModel.saveToSecondBrain()
+                        } catch {
+                            // Revert on failure
+                            withAnimation {
+                                viewModel.updateSaveCount(increment: false)
+                            }
+                            errorMessage = error.localizedDescription
+                            showError = true
+                            LoggingService.error("Failed to save to Second Brain: \(error.localizedDescription)", component: "UI")
+                        }
+                    }
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: viewModel.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
+                            .font(.system(size: 32))
+                            .foregroundColor(viewModel.isInSecondBrain ? .green : .white)
+                        Text(formatCount(viewModel.saveCount))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                }
+                
+                // Comments Button
+                Button {
+                    performHapticFeedback(.light)
+                    showComments = true
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: "bubble.right")
+                            .font(.system(size: 32))
+                            .foregroundColor(.white)
+                        Text(formatCount(video.commentCount))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                }
+                
+                // Share Button
+                Button {
+                    performHapticFeedback(.light)
+                    showShareSheet = true
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 32))
+                            .foregroundColor(.white)
+                        Text("Share")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                }
+            }
+            .padding(.trailing, 16)
+            .padding(.bottom, 100)
+        }
+    }
+    
+    private func handleDoubleTap() {
+        LoggingService.video("Double tap detected - saving to Second Brain", component: "UI")
+        performHapticFeedback(.medium)
+        
+        // Show brain animation with enhanced spring animation
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+            showBrainAnimation = true
+            if !viewModel.isInSecondBrain {
+                viewModel.updateSaveCount(increment: true)
+            }
+        }
+        
+        // Save to Second Brain
+        Task {
+            do {
+                try await viewModel.saveToSecondBrain()
+                performHapticFeedback(.success)
+            } catch {
+                // Revert on failure
+                withAnimation {
+                    viewModel.updateSaveCount(increment: false)
+                }
+                errorMessage = error.localizedDescription
+                showError = true
+                performHapticFeedback(.error)
+                LoggingService.error("Failed to save to Second Brain: \(error.localizedDescription)", component: "UI")
+            }
+        }
+        
+        // Hide brain animation after delay with fade out
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            withAnimation(.easeOut(duration: 0.3)) {
+                showBrainAnimation = false
+            }
+        }
+    }
+    
+    private func performHapticFeedback(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        let generator = UIImpactFeedbackGenerator(style: style)
+        generator.prepare()
+        generator.impactOccurred()
+        LoggingService.debug("Performed haptic feedback: \(style)", component: "UI")
+    }
+    
+    private func performHapticFeedback(_ type: UINotificationFeedbackGenerator.FeedbackType) {
+        let generator = UINotificationFeedbackGenerator()
+        generator.prepare()
+        generator.notificationOccurred(type)
+        LoggingService.debug("Performed notification feedback: \(type)", component: "UI")
     }
     
     private func formatCount(_ count: Int) -> String {
@@ -216,95 +246,77 @@ struct VideoPlayerView: View {
             return "\(count)"
         }
     }
-    
-    private func performBrainAnimation() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-            brainScale = 1.3
-            brainRotation = 360
-            isAddingToSecondBrain = true
-        }
-        
-        // Reset animation after delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                brainScale = 1.0
-                brainRotation = 0
-            }
-        }
-    }
-
-    private func brainButton(for video: Video) -> some View {
-        VStack(spacing: 4) {
-            Button(action: {
-                performBrainAnimation()
-                Task {
-                    do {
-                        try await viewModel.saveToSecondBrain()
-                        withAnimation {
-                            showSaveConfirmation = true
-                        }
-                        // Hide confirmation after delay
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                            withAnimation {
-                                showSaveConfirmation = false
-                            }
-                        }
-                    } catch {
-                        print("❌ Failed to save to Second Brain: \(error)")
-                        errorMessage = error.localizedDescription
-                        withAnimation {
-                            showSaveError = true
-                        }
-                        // Hide error after delay
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                            withAnimation {
-                                showSaveError = false
-                            }
-                        }
-                    }
-                }
-            }) {
-                Image(systemName: isAddingToSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
-                    .foregroundColor(isAddingToSecondBrain ? .green : .white)
-                    .font(.system(size: 32))
-                    .scaleEffect(brainScale)
-                    .rotationEffect(.degrees(brainRotation))
-            }
-            Text("Save")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white)
-        }
-        .opacity(isAppearing ? 1 : 0)
-        .animation(contentAnimation.delay(0.5), value: isAppearing)
-    }
 }
 
 struct CustomVideoPlayer: UIViewControllerRepresentable {
     let player: AVPlayer
     
     func makeUIViewController(context: Context) -> AVPlayerViewController {
-        print("🎥 CustomVideoPlayer: Creating new AVPlayerViewController")
+        LoggingService.video("Creating new AVPlayerViewController", component: "UI")
         let controller = AVPlayerViewController()
         controller.player = player
         controller.showsPlaybackControls = false
         controller.videoGravity = .resizeAspectFill
+        controller.view.backgroundColor = .black
+        controller.allowsPictureInPicturePlayback = false
         
-        // Optimize playback
-        player.automaticallyWaitsToMinimizeStalling = true
-        player.allowsExternalPlayback = false
+        // Configure player for optimal playback
+        player.actionAtItemEnd = .none
         player.preventsDisplaySleepDuringVideoPlayback = true
         
-        if let playerItem = player.currentItem {
-            playerItem.preferredForwardBufferDuration = 4.0
-            playerItem.preferredMaximumResolution = CGSize(width: 1080, height: 1920)
+        // Force playback to start
+        DispatchQueue.main.async {
+            LoggingService.debug("🎬 Initiating playback in AVPlayerViewController", component: "UI")
+            player.seek(to: .zero)
+            player.play()
+            player.rate = 1.0
+            
+            // Verify playback started
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                LoggingService.debug("Playback verification:", component: "UI")
+                LoggingService.debug("- Player rate: \(player.rate)", component: "UI")
+                LoggingService.debug("- Player error: \(player.error?.localizedDescription ?? "none")", component: "UI")
+                if let currentItem = player.currentItem {
+                    LoggingService.debug("- Item status: \(currentItem.status.rawValue)", component: "UI")
+                    LoggingService.debug("- Buffer empty: \(currentItem.isPlaybackBufferEmpty)", component: "UI")
+                    LoggingService.debug("- Buffer full: \(currentItem.isPlaybackBufferFull)", component: "UI")
+                    LoggingService.debug("- Likely to keep up: \(currentItem.isPlaybackLikelyToKeepUp)", component: "UI")
+                }
+            }
         }
         
         return controller
     }
     
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
-        // Update if needed
+        if uiViewController.player !== player {
+            LoggingService.debug("Updating player in AVPlayerViewController", component: "UI")
+            uiViewController.player = player
+            
+            // Ensure playback continues with new player
+            DispatchQueue.main.async {
+                player.play()
+                player.rate = 1.0
+                
+                // Verify playback after update
+                LoggingService.debug("Player update verification:", component: "UI")
+                LoggingService.debug("- New player rate: \(player.rate)", component: "UI")
+                if let currentItem = player.currentItem {
+                    LoggingService.debug("- New item status: \(currentItem.status.rawValue)", component: "UI")
+                }
+            }
+        }
     }
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 struct FlowLayout: Layout {
