@@ -29,6 +29,7 @@ class InsightsViewModel: ObservableObject {
     func fetchDailyInsight() async {
         guard let userId = UserDefaults.standard.string(forKey: "userId") else {
             print("❌ InsightsViewModel: No user ID found")
+            self.error = "Please sign in to view insights"
             return
         }
         
@@ -108,7 +109,11 @@ class InsightsViewModel: ObservableObject {
     }
     
     func loadSavedInsights() async {
-        guard let userId = UserDefaults.standard.string(forKey: "userId") else { return }
+        guard let userId = UserDefaults.standard.string(forKey: "userId") else {
+            print("❌ InsightsViewModel: No user ID found")
+            self.error = "Please sign in to view insights"
+            return
+        }
         
         isLoading = true
         print("📚 InsightsViewModel: Loading saved insights for user: \(userId)")

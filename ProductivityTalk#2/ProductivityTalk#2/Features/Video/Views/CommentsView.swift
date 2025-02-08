@@ -3,10 +3,8 @@ import SwiftUI
 struct CommentsView: View {
     let video: Video
     @StateObject private var viewModel: CommentsViewModel
-    @State private var newCommentText = ""
-    @State private var showSecondBrainConfirmation = false
-    @State private var selectedCommentId: String?
-    @Environment(\.dismiss) private var dismiss
+    @FocusState private var isCommentFieldFocused: Bool
+    @Environment(\.colorScheme) private var colorScheme
     
     init(video: Video) {
         self.video = video
@@ -14,171 +12,151 @@ struct CommentsView: View {
     }
     
     var body: some View {
-        NavigationView {
-            ZStack {
-                Color.secondary.opacity(0.1)
-                    .edgesIgnoringSafeArea(.all)
-                
-                VStack(spacing: 0) {
-                    // Comments List
-                    ScrollView {
-                        LazyVStack(spacing: 16) {
-                            ForEach(viewModel.comments) { comment in
-                                CommentCell(
-                                    comment: comment,
-                                    onSecondBrainTap: {
-                                        selectedCommentId = comment.id
-                                        Task {
-                                            await viewModel.toggleSecondBrain(for: comment)
-                                            showSecondBrainConfirmation = true
-                                        }
-                                    }
-                                )
-                                .padding(.horizontal)
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Comments")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    // Dismiss sheet
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.gray)
+                        .font(.title3)
+                }
+            }
+            .padding()
+            
+            Divider()
+            
+            // Comments List
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    ForEach(viewModel.comments) { comment in
+                        CommentCell(comment: comment) {
+                            Task {
+                                await viewModel.toggleSecondBrain(for: comment)
                             }
                         }
-                        .padding(.vertical)
+                        .padding(.horizontal)
+                        .transition(.opacity)
                     }
-                    
-                    // Comment Input
-                    VStack(spacing: 0) {
-                        Divider()
-                        HStack(spacing: 12) {
-                            TextField("Add a comment...", text: $newCommentText)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                            
-                            Button {
-                                guard !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                                
-                                Task {
-                                    await viewModel.addComment(text: newCommentText)
-                                    newCommentText = ""
-                                }
-                            } label: {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .font(.title2)
-                                    .foregroundColor(.accentColor)
-                            }
-                            .disabled(newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                        .padding()
-                    }
-                    .background(Color.white)
                 }
+                .padding(.vertical)
+            }
+            
+            Divider()
+            
+            // Comment Input
+            HStack(spacing: 12) {
+                TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isCommentFieldFocused)
+                    .frame(maxHeight: 100)
                 
-                // Loading State
-                if viewModel.isLoading {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                }
-                
-                // Second Brain Confirmation
-                if showSecondBrainConfirmation {
-                    VStack(spacing: 12) {
-                        Image(systemName: "brain.head.profile")
-                            .font(.system(size: 40))
-                            .foregroundColor(.green)
-                        Text("Added to Second Brain!")
-                            .font(.headline)
+                Button {
+                    Task {
+                        await viewModel.addComment()
+                        isCommentFieldFocused = false
                     }
-                    .padding()
-                    .background(Color.white)
-                    .cornerRadius(12)
-                    .shadow(radius: 10)
-                    .transition(.scale.combined(with: .opacity))
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(viewModel.newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .blue)
                 }
+                .disabled(viewModel.newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .navigationTitle("Comments")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Close") {
-                        dismiss()
-                    }
-                }
+            .padding()
+        }
+        .alert("Error", isPresented: .constant(viewModel.error != nil)) {
+            Button("OK") {
+                viewModel.error = nil
             }
-            .alert("Error", isPresented: .constant(viewModel.error != nil)) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                if let error = viewModel.error {
-                    Text(error)
-                }
-            }
-            .onChange(of: showSecondBrainConfirmation) { _, newValue in
-                if newValue {
-                    // Auto-hide the confirmation after 2 seconds
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        withAnimation {
-                            showSecondBrainConfirmation = false
-                            selectedCommentId = nil
-                        }
-                    }
-                }
-            }
-            .task {
-                await viewModel.loadComments()
+        } message: {
+            if let error = viewModel.error {
+                Text(error)
             }
         }
     }
 }
 
-// MARK: - Comment Cell
 struct CommentCell: View {
     let comment: Comment
-    let onSecondBrainTap: () -> Void
+    let onBrainTap: () -> Void
     
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Profile Picture
-            AsyncImage(url: URL(string: comment.userProfilePicURL ?? "")) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Image(systemName: "person.circle.fill")
-                    .resizable()
-            }
-            .frame(width: 40, height: 40)
-            .clipShape(Circle())
-            
-            VStack(alignment: .leading, spacing: 4) {
-                // Username and Time
-                HStack {
-                    Text("@\(comment.userUsername)")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    
-                    Text("•")
-                    
-                    Text(comment.createdAt, style: .relative)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            // User Info
+            HStack {
+                if let imageURL = comment.userProfileImageURL {
+                    AsyncImage(url: URL(string: imageURL)) { image in
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    } placeholder: {
+                        Image(systemName: "person.circle.fill")
+                            .foregroundColor(.gray)
+                    }
+                    .frame(width: 24, height: 24)
+                    .clipShape(Circle())
+                } else {
+                    Image(systemName: "person.circle.fill")
+                        .foregroundColor(.gray)
+                        .font(.title3)
                 }
                 
-                // Comment Text
-                Text(comment.text)
-                    .font(.body)
-                    .multilineTextAlignment(.leading)
+                Text(comment.userName ?? "Anonymous")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Text("•")
+                    .foregroundColor(.gray)
+                
+                Text(timeAgo(from: comment.timestamp))
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
             }
             
-            Spacer()
+            // Comment Text
+            Text(comment.text)
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
             
             // Second Brain Button
-            VStack(spacing: 4) {
-                Button(action: onSecondBrainTap) {
-                    Image(systemName: "brain.head.profile")
-                        .font(.title2)
-                        .foregroundColor(comment.secondBrainCount > 0 ? .green : .gray)
+            HStack {
+                Spacer()
+                Button(action: onBrainTap) {
+                    Image(systemName: comment.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
+                        .foregroundColor(comment.isInSecondBrain ? .blue : .gray)
+                        .font(.title3)
                 }
-                
-                Text("\(comment.secondBrainCount)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                .buttonStyle(.plain)
             }
         }
         .padding()
-        .background(Color.secondary.opacity(0.1))
+        .background(Color(UIColor.secondarySystemBackground))
         .cornerRadius(12)
+    }
+    
+    private func timeAgo(from date: Date) -> String {
+        let calendar = Calendar.current
+        let now = Date()
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date, to: now)
+        
+        if let year = components.year, year > 0 {
+            return "\(year)y"
+        } else if let month = components.month, month > 0 {
+            return "\(month)mo"
+        } else if let day = components.day, day > 0 {
+            return "\(day)d"
+        } else if let hour = components.hour, hour > 0 {
+            return "\(hour)h"
+        } else if let minute = components.minute, minute > 0 {
+            return "\(minute)m"
+        } else {
+            return "now"
+        }
     }
 }
 

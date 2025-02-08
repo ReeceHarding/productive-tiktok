@@ -1,5 +1,6 @@
 import SwiftUI
 import FirebaseFirestore
+import CoreHaptics
 
 struct VideoFeedView: View {
     @StateObject private var viewModel = VideoFeedViewModel()
@@ -9,223 +10,19 @@ struct VideoFeedView: View {
     @State private var showSaveConfirmation = false
     @State private var showSaveError = false
     @State private var errorMessage = ""
+    @State private var engine: CHHapticEngine?
+    @State private var scrollViewProxy: ScrollViewProxy?
+    @State private var isScrolling = false
+    
+    // Animation properties
+    private let springAnimation = Animation.spring(response: 0.5, dampingFraction: 0.8)
+    private let transitionAnimation = Animation.easeInOut(duration: 0.3)
     
     var body: some View {
         ZStack {
-            // Video Content Layer
-            GeometryReader { geometry in
-                TabView(selection: $currentIndex) {
-                    ForEach(Array(viewModel.videos.enumerated()), id: \.element.id) { index, video in
-                        VideoPlayerView(video: video)
-                            .frame(
-                                width: geometry.size.height,  // Swap width and height
-                                height: geometry.size.width
-                            )
-                            .rotationEffect(.degrees(-90))
-                            .tag(index)
-                            .gesture(
-                                DragGesture()
-                                    .onChanged { gesture in
-                                        // Only track horizontal drag (which is now vertical due to rotation)
-                                        dragOffset = max(0, gesture.translation.height)
-                                    }
-                                    .onEnded { gesture in
-                                        if dragOffset > 100 { // Threshold to trigger save
-                                            Task {
-                                                await saveToSecondBrain(video: video)
-                                            }
-                                        }
-                                        dragOffset = 0
-                                    }
-                            )
-                    }
-                }
-                .frame(
-                    width: geometry.size.height,  // Swap width and height here too
-                    height: geometry.size.width
-                )
-                .rotationEffect(.degrees(90))
-                .frame(
-                    width: geometry.size.width,   // Frame to maintain original container size
-                    height: geometry.size.height
-                )
-                .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
-                .ignoresSafeArea()
-                // Monitor index changes for infinite scrolling and preloading
-                .onChange(of: currentIndex) { oldValue, newValue in
-                    // Preload next set of videos when approaching the end
-                    if newValue >= viewModel.videos.count - 2 {
-                        Task {
-                            print("🔄 VideoFeed: Preloading next batch of videos")
-                            await viewModel.fetchNextBatch()
-                        }
-                    }
-                    
-                    // Implement infinite scrolling by resetting to start
-                    if newValue == viewModel.videos.count - 1 {
-                        print("🔄 VideoFeed: Reached end, loading more videos")
-                        Task {
-                            await viewModel.fetchNextBatch()
-                        }
-                    }
-                    
-                    // Preload video for the next index
-                    if newValue + 1 < viewModel.videos.count {
-                        print("⏭️ VideoFeed: Preloading next video")
-                        viewModel.preloadVideo(at: newValue + 1)
-                    }
-                }
-            }
-            
-            // Swipe Indicator Overlay
-            if dragOffset > 0 {
-                HStack(spacing: 12) {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 30))
-                    Text("Keep swiping to save")
-                        .font(.headline)
-                }
-                .foregroundColor(.white)
-                .padding()
-                .background(Color.black.opacity(0.7))
-                .cornerRadius(12)
-                .scaleEffect(min(1.0, dragOffset / 100))
-                .opacity(min(1.0, dragOffset / 100))
-            }
-            
-            // Save Confirmation Overlay
-            if showSaveConfirmation {
-                VStack {
-                    Image(systemName: "brain.head.profile")
-                        .font(.system(size: 40))
-                        .foregroundColor(.green)
-                    Text("Saved to Second Brain!")
-                        .foregroundColor(.white)
-                        .font(.headline)
-                }
-                .padding()
-                .background(Color.black.opacity(0.7))
-                .cornerRadius(12)
-                .transition(.scale.combined(with: .opacity))
-            }
-            
-            // Error Overlay
-            if showSaveError {
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.circle")
-                        .font(.system(size: 30))
-                        .foregroundColor(.red)
-                    Text("Failed to Save")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    Text(errorMessage)
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                        .multilineTextAlignment(.center)
-                }
-                .padding()
-                .background(Color.black.opacity(0.7))
-                .cornerRadius(12)
-                .transition(.scale.combined(with: .opacity))
-                .padding(.horizontal)
-            }
-            
-            // Fixed Position UI Elements Layer
-            VStack {
-                // Top Navigation
-                HStack(spacing: 20) {
-                    Text("For You")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 60)
-                .background(
-                    LinearGradient(
-                        gradient: Gradient(colors: [Color.black.opacity(0.6), Color.clear]),
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                
-                Spacer()
-                
-                // Right-side interaction buttons
-                if !viewModel.videos.isEmpty, let currentVideo = viewModel.videos[safe: currentIndex] {
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 20) {
-                            // Profile Picture with Follow Button
-                            VStack(spacing: 4) {
-                                AsyncImage(url: URL(string: currentVideo.ownerProfilePicURL ?? "")) { image in
-                                    image
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                } placeholder: {
-                                    Image(systemName: "person.circle.fill")
-                                        .resizable()
-                                }
-                                .frame(width: 48, height: 48)
-                                .clipShape(Circle())
-                                .overlay(
-                                    Image(systemName: "plus.circle.fill")
-                                        .font(.system(size: 20))
-                                        .foregroundColor(.red)
-                                        .background(Circle().fill(Color.white))
-                                        .offset(y: 20)
-                                )
-                            }
-                            .padding(.bottom, 10)
-                            
-                            // Like Button
-                            VStack(spacing: 4) {
-                                Button(action: {
-                                    if let playerView = viewModel.playerViewModels[currentVideo.id] {
-                                        playerView.toggleLike()
-                                    }
-                                }) {
-                                    Image(systemName: viewModel.playerViewModels[currentVideo.id]?.isLiked == true ? "heart.fill" : "heart")
-                                        .foregroundColor(viewModel.playerViewModels[currentVideo.id]?.isLiked == true ? .red : .white)
-                                        .font(.system(size: 32))
-                                }
-                                Text(formatCount(currentVideo.likeCount))
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(.white)
-                            }
-                            
-                            // Comments Button
-                            VStack(spacing: 4) {
-                                Button(action: { showComments = true }) {
-                                    Image(systemName: "bubble.right")
-                                        .font(.system(size: 30))
-                                        .foregroundColor(.white)
-                                }
-                                Text(formatCount(currentVideo.commentCount))
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(.white)
-                            }
-                            
-                            // Share Button
-                            VStack(spacing: 4) {
-                                Button {
-                                    if let playerView = viewModel.playerViewModels[currentVideo.id] {
-                                        playerView.shareVideo()
-                                    }
-                                } label: {
-                                    Image(systemName: "square.and.arrow.up")
-                                        .font(.system(size: 30))
-                                        .foregroundColor(.white)
-                                }
-                                Text("Share")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(.white)
-                            }
-                        }
-                        .padding(.trailing, 20)
-                        .padding(.bottom, 50)
-                    }
-                }
-            }
+            videoContentLayer
+            overlayLayer
+            fixedUILayer
         }
         .sheet(isPresented: $showComments) {
             if let currentVideo = viewModel.videos[safe: currentIndex] {
@@ -238,6 +35,305 @@ struct VideoFeedView: View {
                 print("🎬 VideoFeed: Initial video fetch")
                 await viewModel.fetchVideos()
             }
+        }
+        .onAppear {
+            prepareHaptics()
+        }
+    }
+    
+    // MARK: - Content Layers
+    
+    private var videoContentLayer: some View {
+        GeometryReader { geometry in
+            TabView(selection: $currentIndex) {
+                ForEach(Array(viewModel.videos.enumerated()), id: \.element.id) { index, video in
+                    VideoPlayerView(video: video)
+                        .frame(
+                            width: geometry.size.height,
+                            height: geometry.size.width
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .tag(index)
+                        .gesture(createDragGesture(for: video))
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .move(edge: .leading).combined(with: .opacity)
+                        ))
+                }
+            }
+            .frame(
+                width: geometry.size.height,
+                height: geometry.size.width
+            )
+            .rotationEffect(.degrees(90))
+            .frame(
+                width: geometry.size.width,
+                height: geometry.size.height
+            )
+            .tabViewStyle(
+                PageTabViewStyle(indexDisplayMode: .never)
+            )
+            .ignoresSafeArea()
+            .onChange(of: currentIndex) { oldValue, newValue in
+                handleIndexChange(newValue)
+            }
+        }
+    }
+    
+    private var overlayLayer: some View {
+        Group {
+            if dragOffset > 0 { swipeIndicator }
+            if showSaveConfirmation { saveConfirmation }
+            if showSaveError { errorOverlay }
+        }
+    }
+    
+    private var fixedUILayer: some View {
+        VStack {
+            topNavigation
+            Spacer()
+            if !viewModel.videos.isEmpty,
+               let currentVideo = viewModel.videos[safe: currentIndex] {
+                interactionButtons(for: currentVideo)
+            }
+        }
+    }
+    
+    // MARK: - UI Components
+    
+    private var swipeIndicator: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "brain.head.profile")
+                .font(.system(size: 30))
+            Text("Keep swiping to save")
+                .font(.headline)
+        }
+        .foregroundColor(.white)
+        .padding()
+        .background(Color.black.opacity(0.7))
+        .cornerRadius(12)
+        .scaleEffect(min(1.0, dragOffset / 100))
+        .opacity(min(1.0, dragOffset / 100))
+        .transition(.scale.combined(with: .opacity))
+    }
+    
+    private var saveConfirmation: some View {
+        VStack {
+            Image(systemName: "brain.head.profile")
+                .font(.system(size: 40))
+                .foregroundColor(.green)
+            Text("Saved to Second Brain!")
+                .foregroundColor(.white)
+                .font(.headline)
+        }
+        .padding()
+        .background(Color.black.opacity(0.7))
+        .cornerRadius(12)
+        .transition(.scale.combined(with: .opacity))
+        .animation(springAnimation, value: showSaveConfirmation)
+    }
+    
+    private var errorOverlay: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 30))
+                .foregroundColor(.red)
+            Text("Failed to Save")
+                .font(.headline)
+                .foregroundColor(.white)
+            Text(errorMessage)
+                .font(.subheadline)
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+        .background(Color.black.opacity(0.7))
+        .cornerRadius(12)
+        .transition(.scale.combined(with: .opacity))
+        .animation(springAnimation, value: showSaveError)
+        .padding(.horizontal)
+    }
+    
+    private var topNavigation: some View {
+        HStack(spacing: 20) {
+            Text("For You")
+                .font(.headline)
+                .foregroundColor(.white)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 60)
+        .background(
+            LinearGradient(
+                gradient: Gradient(colors: [Color.black.opacity(0.6), Color.clear]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+    
+    private func interactionButtons(for video: Video) -> some View {
+        HStack {
+            Spacer()
+            VStack(spacing: 20) {
+                profileButton(for: video)
+                secondBrainButton(for: video)
+                commentsButton(for: video)
+                shareButton(for: video)
+            }
+            .padding(.trailing, 20)
+            .padding(.bottom, 50)
+        }
+    }
+    
+    // MARK: - Helper Functions
+    
+    private func createDragGesture(for video: Video) -> some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { gesture in
+                withAnimation(springAnimation) {
+                    dragOffset = max(0, gesture.translation.height)
+                }
+                if dragOffset > 50 {
+                    performHapticFeedback(.light)
+                }
+            }
+            .onEnded { gesture in
+                withAnimation(springAnimation) {
+                    if dragOffset > 100 {
+                        Task {
+                            performHapticFeedback(.medium)
+                            await saveToSecondBrain(video: video)
+                        }
+                    }
+                    dragOffset = 0
+                }
+            }
+    }
+    
+    private func handleIndexChange(_ newValue: Int) {
+        withAnimation(transitionAnimation) {
+            viewModel.preloadAdjacentVideos(currentIndex: newValue)
+            performHapticFeedback(.soft)
+            
+            if newValue >= viewModel.videos.count - 2 {
+                Task {
+                    print("🔄 VideoFeed: Preloading next batch of videos")
+                    await viewModel.fetchNextBatch()
+                }
+            }
+        }
+    }
+    
+    // MARK: - Haptic Feedback
+    
+    private func prepareHaptics() {
+        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
+        
+        do {
+            engine = try CHHapticEngine()
+            try engine?.start()
+            
+            engine?.resetHandler = {
+                print("🔄 Restarting Haptic engine...")
+                do {
+                    try self.engine?.start()
+                } catch {
+                    print("❌ Failed to restart haptic engine: \(error)")
+                }
+            }
+            
+            engine?.stoppedHandler = { reason in
+                print("🛑 Haptic engine stopped: \(reason)")
+            }
+            
+        } catch {
+            print("❌ Failed to create haptic engine: \(error)")
+        }
+    }
+    
+    private func performHapticFeedback(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        let generator = UIImpactFeedbackGenerator(style: style)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+    
+    // MARK: - Button Components
+    
+    private func profileButton(for video: Video) -> some View {
+        VStack(spacing: 4) {
+            AsyncImage(url: URL(string: video.ownerProfilePicURL ?? "")) { image in
+                image
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Image(systemName: "person.circle.fill")
+                    .resizable()
+            }
+            .frame(width: 48, height: 48)
+            .clipShape(Circle())
+            .onAppear {
+                print("Profile button rendered for video id: \(video.id) without plus overlay")
+            }
+        }
+        .padding(.bottom, 10)
+    }
+    
+    private func secondBrainButton(for video: Video) -> some View {
+        VStack(spacing: 4) {
+            Button(action: {
+                if let playerView = viewModel.playerViewModels[video.id] {
+                    Task {
+                        await saveToSecondBrain(video: video)
+                    }
+                }
+            }) {
+                Image(systemName: viewModel.playerViewModels[video.id]?.isInSecondBrain == true ? "brain.head.profile.fill" : "brain.head.profile")
+                    .foregroundColor(viewModel.playerViewModels[video.id]?.isInSecondBrain == true ? .green : .white)
+                    .font(.system(size: 32))
+            }
+            Text(formatCount(video.saveCount))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+    
+    private func commentsButton(for video: Video) -> some View {
+        VStack(spacing: 4) {
+            Button(action: { showComments = true }) {
+                Image(systemName: "bubble.right")
+                    .font(.system(size: 30))
+                    .foregroundColor(.white)
+            }
+            Text(formatCount(video.commentCount))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+    
+    private func shareButton(for video: Video) -> some View {
+        VStack(spacing: 4) {
+            Button {
+                if let playerView = viewModel.playerViewModels[video.id] {
+                    playerView.shareVideo()
+                }
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 30))
+                    .foregroundColor(.white)
+            }
+            Text("Share")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white)
+        }
+    }
+    
+    private func formatCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        } else if count >= 1_000 {
+            return String(format: "%.1fK", Double(count) / 1_000)
+        } else {
+            return "\(count)"
         }
     }
     
@@ -267,16 +363,6 @@ struct VideoFeedView: View {
                     showSaveError = false
                 }
             }
-        }
-    }
-    
-    private func formatCount(_ count: Int) -> String {
-        if count >= 1_000_000 {
-            return String(format: "%.1fM", Double(count) / 1_000_000)
-        } else if count >= 1_000 {
-            return String(format: "%.1fK", Double(count) / 1_000)
-        } else {
-            return "\(count)"
         }
     }
 }

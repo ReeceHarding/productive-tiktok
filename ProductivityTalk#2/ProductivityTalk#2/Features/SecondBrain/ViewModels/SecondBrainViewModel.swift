@@ -18,7 +18,7 @@ class SecondBrainViewModel: ObservableObject {
     func loadUserData() async {
         guard let userId = UserDefaults.standard.string(forKey: "userId") else {
             print("❌ SecondBrainViewModel: No user ID found")
-            self.error = "User not logged in"
+            self.error = "Please sign in to view your Second Brain"
             return
         }
         

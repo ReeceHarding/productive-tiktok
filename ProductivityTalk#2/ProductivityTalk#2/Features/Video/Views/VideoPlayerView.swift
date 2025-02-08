@@ -10,7 +10,15 @@ struct VideoPlayerView: View {
     @State private var showSaveConfirmation = false
     @State private var showSaveError = false
     @State private var errorMessage = ""
+    @State private var isAppearing = false
     @Environment(\.scenePhase) private var scenePhase
+    @State private var isAddingToSecondBrain = false
+    @State private var brainScale: CGFloat = 1.0
+    @State private var brainRotation: Double = 0.0
+    
+    // Animation properties
+    private let appearAnimation = Animation.spring(response: 0.6, dampingFraction: 0.8)
+    private let contentAnimation = Animation.easeInOut(duration: 0.3)
     
     init(video: Video) {
         self.video = video
@@ -22,86 +30,92 @@ struct VideoPlayerView: View {
             if let player = viewModel.player {
                 CustomVideoPlayer(player: player)
                     .edgesIgnoringSafeArea(.all)
+                    .opacity(isAppearing ? 1 : 0)
                     .onAppear {
+                        withAnimation(appearAnimation) {
+                            isAppearing = true
+                        }
                         print("▶️ VideoPlayer: Starting playback for video: \(video.id)")
                         player.play()
                     }
                     .onDisappear {
+                        withAnimation(appearAnimation) {
+                            isAppearing = false
+                        }
                         print("⏸️ VideoPlayer: Pausing playback for video: \(video.id)")
                         player.pause()
                     }
                 
-                // Video Controls Overlay
+                // Video Controls Overlay with improved animations
                 VStack {
                     Spacer()
                     
-                    // Video Information
-                    HStack(alignment: .bottom) {
+                    HStack {
+                        // Video Information with fade animation
                         VStack(alignment: .leading, spacing: 8) {
                             Text(video.title)
                                 .font(.headline)
                                 .foregroundColor(.white)
+                                .opacity(isAppearing ? 1 : 0)
+                                .animation(contentAnimation.delay(0.2), value: isAppearing)
                             
                             Text(video.description)
                                 .font(.subheadline)
                                 .foregroundColor(.white.opacity(0.8))
                                 .lineLimit(2)
+                                .opacity(isAppearing ? 1 : 0)
+                                .animation(contentAnimation.delay(0.3), value: isAppearing)
                         }
                         .padding()
                         
                         Spacer()
                         
-                        // Right-side interaction buttons
-                        VStack(spacing: 20) {
-                            Button(action: viewModel.toggleLike) {
-                                Image(systemName: viewModel.isLiked ? "heart.fill" : "heart")
-                                    .font(.title)
-                                    .foregroundColor(viewModel.isLiked ? .red : .white)
-                            }
+                        // Right side buttons
+                        VStack(spacing: 24) {
+                            brainButton(for: video)  // New brain button
                             
-                            Button {
-                                Task {
-                                    do {
-                                        try await viewModel.saveToSecondBrain()
-                                        withAnimation {
-                                            showSaveConfirmation = true
-                                        }
-                                        // Hide confirmation after delay
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                            withAnimation {
-                                                showSaveConfirmation = false
-                                            }
-                                        }
-                                    } catch {
-                                        errorMessage = error.localizedDescription
-                                        withAnimation {
-                                            showSaveError = true
-                                        }
-                                        // Hide error after delay
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                                            withAnimation {
-                                                showSaveError = false
-                                            }
-                                        }
-                                    }
+                            // Comments Button
+                            VStack(spacing: 4) {
+                                Button(action: { showComments = true }) {
+                                    Image(systemName: "bubble.right")
+                                        .font(.system(size: 30))
+                                        .foregroundColor(.white)
                                 }
-                            } label: {
-                                Image(systemName: "brain.head.profile")
-                                    .font(.title)
+                                .opacity(isAppearing ? 1 : 0)
+                                .animation(contentAnimation.delay(0.6), value: isAppearing)
+                                
+                                Text(formatCount(video.commentCount))
+                                    .font(.system(size: 12, weight: .semibold))
                                     .foregroundColor(.white)
                             }
                             
-                            Button {
-                                viewModel.shareVideo()
-                            } label: {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.title)
+                            // Share Button
+                            VStack(spacing: 4) {
+                                Button {
+                                    viewModel.shareVideo()
+                                } label: {
+                                    Image(systemName: "square.and.arrow.up")
+                                        .font(.system(size: 30))
+                                        .foregroundColor(.white)
+                                }
+                                .opacity(isAppearing ? 1 : 0)
+                                .animation(contentAnimation.delay(0.7), value: isAppearing)
+                                
+                                Text("Share")
+                                    .font(.system(size: 12, weight: .semibold))
                                     .foregroundColor(.white)
                             }
                         }
                         .padding(.trailing)
-                        .padding(.bottom, 40)
+                        .padding(.bottom, 50)
                     }
+                    .background(
+                        LinearGradient(
+                            gradient: Gradient(colors: [.clear, .black.opacity(0.5)]),
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
                 }
             } else {
                 ProgressView()
@@ -161,109 +175,6 @@ struct VideoPlayerView: View {
                 .scaleEffect(min(1.0, dragOffset / 100))
                 .opacity(min(1.0, dragOffset / 100))
             }
-            
-            // Overlay Content
-            VStack {
-                Spacer()
-                
-                HStack(alignment: .bottom, spacing: 16) {
-                    // Left side - Username and Caption
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("@\(video.ownerUsername)")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.white)
-                        
-                        Text(video.description)
-                            .font(.system(size: 14, weight: .regular))
-                            .foregroundColor(.white.opacity(0.9))
-                            .lineLimit(2)
-                        
-                        FlowLayout(spacing: 4) {
-                            ForEach(video.tags, id: \.self) { tag in
-                                Text(tag)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.9))
-                            }
-                        }
-                    }
-                    .padding(.leading)
-                    .padding(.bottom, 20)
-                    
-                    Spacer()
-                    
-                    // Right side - Interaction Buttons
-                    VStack(spacing: 24) {
-                        // Profile Picture with Follow Button
-                        VStack(spacing: 4) {
-                            AsyncImage(url: URL(string: video.ownerProfilePicURL ?? "")) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                            } placeholder: {
-                                Image(systemName: "person.circle.fill")
-                                    .resizable()
-                            }
-                            .frame(width: 48, height: 48)
-                            .clipShape(Circle())
-                            .overlay(
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.system(size: 20))
-                                    .foregroundColor(.red)
-                                    .background(Circle().fill(Color.white))
-                                    .offset(y: 20)
-                            )
-                        }
-                        .padding(.bottom, 10)
-                        
-                        // Like Button
-                        VStack(spacing: 4) {
-                            Button(action: { viewModel.toggleLike() }) {
-                                Image(systemName: viewModel.isLiked ? "heart.fill" : "heart")
-                                    .foregroundColor(viewModel.isLiked ? .red : .white)
-                                    .font(.system(size: 32))
-                            }
-                            Text(formatCount(video.likeCount))
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
-                        }
-                        
-                        // Comments Button
-                        VStack(spacing: 4) {
-                            Button(action: { showComments = true }) {
-                                Image(systemName: "bubble.right")
-                                    .font(.system(size: 30))
-                                    .foregroundColor(.white)
-                            }
-                            Text(formatCount(video.commentCount))
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
-                        }
-                        
-                        // Share Button
-                        VStack(spacing: 4) {
-                            Button {
-                                viewModel.shareVideo()
-                            } label: {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.title)
-                                    .foregroundColor(.white)
-                            }
-                            Text("Share")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .padding(.trailing)
-                    .padding(.bottom, 20)
-                }
-                .background(
-                    LinearGradient(
-                        gradient: Gradient(colors: [.clear, .black.opacity(0.3)]),
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-            }
         }
         .onAppear {
             viewModel.setupPlayer()
@@ -280,9 +191,15 @@ struct VideoPlayerView: View {
             switch newPhase {
             case .active:
                 print("📱 VideoPlayer: App became active - resuming playback")
+                withAnimation(appearAnimation) {
+                    isAppearing = true
+                }
                 viewModel.player?.play()
             case .inactive, .background:
                 print("📱 VideoPlayer: App became inactive/background - pausing playback")
+                withAnimation(appearAnimation) {
+                    isAppearing = false
+                }
                 viewModel.player?.pause()
             @unknown default:
                 break
@@ -299,6 +216,67 @@ struct VideoPlayerView: View {
             return "\(count)"
         }
     }
+    
+    private func performBrainAnimation() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+            brainScale = 1.3
+            brainRotation = 360
+            isAddingToSecondBrain = true
+        }
+        
+        // Reset animation after delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                brainScale = 1.0
+                brainRotation = 0
+            }
+        }
+    }
+
+    private func brainButton(for video: Video) -> some View {
+        VStack(spacing: 4) {
+            Button(action: {
+                performBrainAnimation()
+                Task {
+                    do {
+                        try await viewModel.saveToSecondBrain()
+                        withAnimation {
+                            showSaveConfirmation = true
+                        }
+                        // Hide confirmation after delay
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            withAnimation {
+                                showSaveConfirmation = false
+                            }
+                        }
+                    } catch {
+                        print("❌ Failed to save to Second Brain: \(error)")
+                        errorMessage = error.localizedDescription
+                        withAnimation {
+                            showSaveError = true
+                        }
+                        // Hide error after delay
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            withAnimation {
+                                showSaveError = false
+                            }
+                        }
+                    }
+                }
+            }) {
+                Image(systemName: isAddingToSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
+                    .foregroundColor(isAddingToSecondBrain ? .green : .white)
+                    .font(.system(size: 32))
+                    .scaleEffect(brainScale)
+                    .rotationEffect(.degrees(brainRotation))
+            }
+            Text("Save")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white)
+        }
+        .opacity(isAppearing ? 1 : 0)
+        .animation(contentAnimation.delay(0.5), value: isAppearing)
+    }
 }
 
 struct CustomVideoPlayer: UIViewControllerRepresentable {
@@ -310,6 +288,17 @@ struct CustomVideoPlayer: UIViewControllerRepresentable {
         controller.player = player
         controller.showsPlaybackControls = false
         controller.videoGravity = .resizeAspectFill
+        
+        // Optimize playback
+        player.automaticallyWaitsToMinimizeStalling = true
+        player.allowsExternalPlayback = false
+        player.preventsDisplaySleepDuringVideoPlayback = true
+        
+        if let playerItem = player.currentItem {
+            playerItem.preferredForwardBufferDuration = 4.0
+            playerItem.preferredMaximumResolution = CGSize(width: 1080, height: 1920)
+        }
+        
         return controller
     }
     

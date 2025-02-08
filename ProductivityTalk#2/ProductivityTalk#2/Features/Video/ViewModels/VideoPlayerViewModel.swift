@@ -11,6 +11,7 @@ class VideoPlayerViewModel: ObservableObject {
     @Published private(set) var isSaved = false
     @Published private(set) var playerStatus: String = "unknown"
     @Published private(set) var playerError: String?
+    @Published var isInSecondBrain = false
     
     private let firestore = Firestore.firestore()
     private var timeObserver: Any?
@@ -20,6 +21,8 @@ class VideoPlayerViewModel: ObservableObject {
     init(video: Video) {
         self.video = video
         print("📱 VideoPlayer: Initialized for video ID: \(video.id)")
+        setupPlayer()
+        checkInteractionStatus()
     }
     
     func setupPlayer() {
@@ -184,6 +187,24 @@ class VideoPlayerViewModel: ObservableObject {
                 print("✅ VideoPlayer: Save status checked - isSaved: \(isSaved)")
             } catch {
                 print("❌ VideoPlayer: Error checking save status: \(error.localizedDescription)")
+            }
+        }
+        
+        // Check Second Brain status
+        Task {
+            do {
+                let secondBrainDoc = try await firestore.collection("users")
+                    .document(userId)
+                    .collection("secondBrain")
+                    .document(video.id)
+                    .getDocument()
+                
+                await MainActor.run {
+                    self.isInSecondBrain = secondBrainDoc.exists
+                }
+                print("✅ VideoPlayer: Second Brain status checked - isInSecondBrain: \(self.isInSecondBrain)")
+            } catch {
+                print("❌ VideoPlayer: Error checking Second Brain status: \(error.localizedDescription)")
             }
         }
     }

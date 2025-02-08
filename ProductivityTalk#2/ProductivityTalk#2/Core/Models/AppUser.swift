@@ -1,10 +1,10 @@
 import Foundation
 import FirebaseFirestore
 
-struct AppUser: Identifiable, Codable {
+struct AppUser: Codable, Identifiable {
     let id: String
-    let username: String
-    let email: String
+    var username: String
+    var email: String
     var profilePicURL: String?
     let createdAt: Date
     var bio: String?
@@ -267,12 +267,12 @@ struct AppUser: Identifiable, Codable {
             "topicDistribution": topicDistribution
         ]
         
-        if let profilePicURL = profilePicURL {
-            data["profilePicURL"] = profilePicURL
-        }
-        
         if let bio = bio {
             data["bio"] = bio
+        }
+        
+        if let profilePicURL = profilePicURL {
+            data["profilePicURL"] = profilePicURL
         }
         
         print("✅ AppUser: Converted user data to Firestore format")

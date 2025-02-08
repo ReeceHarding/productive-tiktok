@@ -2,6 +2,9 @@ import Foundation
 import FirebaseAuth
 import FirebaseFirestore
 
+// Import AppUser from the same target
+import struct ProductivityTalk_2.AppUser
+
 enum AuthError: Error {
     case invalidEmail
     case weakPassword
@@ -57,12 +60,14 @@ class AuthenticationManager: ObservableObject {
             
             if let user = user {
                 print("🔐 Auth: Authentication state changed - User: \(user.uid)")
+                UserDefaults.standard.set(user.uid, forKey: "userId")
                 Task {
                     await self.fetchAppUser(uid: user.uid)
                 }
             } else {
                 print("🔐 Auth: User signed out")
-                self.appUser = nil
+                UserDefaults.standard.removeObject(forKey: "userId")
+                self.appUser = .none
             }
         }
     }

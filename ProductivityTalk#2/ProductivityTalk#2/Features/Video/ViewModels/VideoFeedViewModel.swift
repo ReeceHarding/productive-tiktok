@@ -14,6 +14,14 @@ class VideoFeedViewModel: ObservableObject {
     private var isFetching = false
     private var preloadedPlayers: [String: AVPlayer] = [:]
     private let batchSize = 5
+    private let preloadWindow = 2 // Number of videos to preload ahead and behind
+    private var preloadQueue = OperationQueue()
+    private var preloadTasks: [String: Task<Void, Never>] = [:]
+    
+    init() {
+        preloadQueue.maxConcurrentOperationCount = 2
+        print("🎬 VideoFeed: Initialized with preload window of \(preloadWindow)")
+    }
     
     func fetchVideos() async {
         guard !isFetching else {
@@ -133,55 +141,110 @@ class VideoFeedViewModel: ObservableObject {
         
         print("⏳ VideoFeed: Preloading video: \(video.id)")
         
-        // Use AVURLAsset instead of AVAsset(url:)
-        let asset = AVURLAsset(url: url)
-        let playerItem = AVPlayerItem(asset: asset)
-        let player = AVPlayer(playerItem: playerItem)
+        // Cancel any existing preload task for this video
+        preloadTasks[video.id]?.cancel()
         
-        // Store the preloaded player
-        preloadedPlayers[video.id] = player
-        
-        // Configure buffer size
-        playerItem.preferredForwardBufferDuration = 3
-        
-        // Load asset asynchronously
-        Task {
+        // Create new preload task
+        let preloadTask = Task {
+            // Create asset with custom loading options
+            let asset = AVURLAsset(url: url, options: [
+                "AVURLAssetPreferPreciseDurationAndTimingKey": true,
+                "AVURLAssetOutOfBandMIMETypeKey": "video/mp4"
+            ])
+            
+            let playerItem = AVPlayerItem(asset: asset)
+            let player = AVPlayer(playerItem: playerItem)
+            
+            // Enhanced buffer configuration
+            playerItem.preferredForwardBufferDuration = 4.0
+            playerItem.preferredMaximumResolution = .init(width: 1080, height: 1920)
+            
+            // Store the preloaded player
+            preloadedPlayers[video.id] = player
+            
             do {
-                // Load the asset's duration
-                _ = try await asset.load(.duration)
+                // Load essential properties asynchronously
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    group.addTask {
+                        let duration = try await asset.load(.duration)
+                        print("📊 VideoFeed: Loaded duration for video \(video.id): \(duration.seconds) seconds")
+                    }
+                    group.addTask {
+                        let tracks = try await asset.load(.tracks)
+                        print("📊 VideoFeed: Loaded \(tracks.count) tracks for video \(video.id)")
+                    }
+                    
+                    try await group.waitForAll()
+                }
                 
-                // Monitor playback buffer
-                let stream = AsyncStream<Void> { continuation in
-                    Task {
-                        while !Task.isCancelled {
-                            if playerItem.isPlaybackLikelyToKeepUp {
-                                continuation.finish()
-                                break
-                            } else {
-                                continuation.yield(())
-                                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                            }
+                // Monitor playback buffer with improved logic
+                let stream = AsyncStream<Bool> { continuation in
+                    let interval = CMTime(seconds: 0.1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+                    let observer = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { _ in
+                        if playerItem.isPlaybackLikelyToKeepUp && 
+                           playerItem.status == .readyToPlay {
+                            continuation.yield(true)
+                            continuation.finish()
                         }
+                    }
+                    
+                    continuation.onTermination = { @Sendable _ in
+                        player.removeTimeObserver(observer)
                     }
                 }
                 
-                for try await _ in stream {
-                    try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                for await isReady in stream {
+                    if isReady {
+                        print("✅ VideoFeed: Successfully preloaded video: \(video.id)")
+                        break
+                    }
                 }
                 
-                print("✅ VideoFeed: Successfully preloaded video: \(video.id)")
             } catch {
                 print("❌ VideoFeed: Error preloading video: \(error)")
                 preloadedPlayers.removeValue(forKey: video.id)
             }
         }
         
-        // Clean up old preloaded videos if we have too many
-        if preloadedPlayers.count > 3 {
-            let oldestKeys = Array(preloadedPlayers.keys.prefix(preloadedPlayers.count - 3))
-            for key in oldestKeys {
-                preloadedPlayers.removeValue(forKey: key)
-                print("🧹 VideoFeed: Cleaned up preloaded video: \(key)")
+        preloadTasks[video.id] = preloadTask
+        
+        // Cleanup old preloaded videos
+        cleanupPreloadedVideos(currentIndex: index)
+    }
+    
+    private func cleanupPreloadedVideos(currentIndex: Int) {
+        let validIndices = Set((currentIndex - preloadWindow)...(currentIndex + preloadWindow))
+        let videosToKeep = validIndices.compactMap { index -> String? in
+            guard index >= 0 && index < videos.count else { return nil }
+            return videos[index].id
+        }
+        
+        let videosToRemove = Set(preloadedPlayers.keys).subtracting(videosToKeep)
+        
+        for videoId in videosToRemove {
+            preloadedPlayers.removeValue(forKey: videoId)
+            preloadTasks[videoId]?.cancel()
+            preloadTasks.removeValue(forKey: videoId)
+            print("🧹 VideoFeed: Cleaned up preloaded video: \(videoId)")
+        }
+    }
+    
+    func preloadAdjacentVideos(currentIndex: Int) {
+        print("🔄 VideoFeed: Preloading adjacent videos for index \(currentIndex)")
+        
+        // Preload next videos
+        for offset in 1...preloadWindow {
+            let nextIndex = currentIndex + offset
+            if nextIndex < videos.count {
+                preloadVideo(at: nextIndex)
+            }
+        }
+        
+        // Preload previous videos
+        for offset in 1...preloadWindow {
+            let prevIndex = currentIndex - offset
+            if prevIndex >= 0 {
+                preloadVideo(at: prevIndex)
             }
         }
     }

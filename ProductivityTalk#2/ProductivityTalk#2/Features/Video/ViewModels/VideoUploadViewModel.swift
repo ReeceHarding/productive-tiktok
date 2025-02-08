@@ -21,6 +21,7 @@ class VideoUploadViewModel: ObservableObject {
     // Firebase References
     private let storage = Storage.storage()
     private let firestore = Firestore.firestore()
+    private let videoProcessor = VideoProcessingService.shared
     
     struct UploadState {
         var progress: Double
@@ -46,42 +47,27 @@ class VideoUploadViewModel: ObservableObject {
                 try videoData.write(to: tempURL)
                 print("✅ Video: Saved video to temporary file: \(tempURL.path)")
                 
-                // Generate thumbnail
-                let asset = AVURLAsset(url: tempURL)
-                let generator = AVAssetImageGenerator(asset: asset)
-                generator.appliesPreferredTrackTransform = true
+                // Process video and get thumbnail
+                print("🎬 Video: Starting video processing")
+                let (processedVideoURL, thumbnailURL) = try await videoProcessor.processAndUploadVideo(sourceURL: tempURL)
                 
-                let time = CMTime(seconds: 0, preferredTimescale: 1)
-                
-                // Use async thumbnail generation
-                let cgImage = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CGImage, Error>) in
-                    generator.generateCGImageAsynchronously(for: time) { cgImage, actualTime, error in
-                        if let error = error {
-                            continuation.resume(throwing: error)
-                        } else if let cgImage = cgImage {
-                            continuation.resume(returning: cgImage)
-                        } else {
-                            continuation.resume(throwing: NSError(domain: "VideoUpload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to generate thumbnail"]))
-                        }
-                    }
-                }
-                
-                let thumbnailImage = UIImage(cgImage: cgImage)
-                guard let thumbnailData = thumbnailImage.jpegData(compressionQuality: 0.7) else {
-                    throw NSError(domain: "VideoUpload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to compress thumbnail"])
-                }
+                // Load thumbnail image for UI
+                let thumbnailData = try Data(contentsOf: URL(string: thumbnailURL)!)
+                let thumbnailImage = UIImage(data: thumbnailData)
                 print("✅ Video: Generated thumbnail image for \(id)")
                 
-                // Store data and update UI
-                self.videoData[id] = (videoData, thumbnailData)
+                // Store processed video data and update UI
+                self.videoData[id] = (try Data(contentsOf: URL(string: processedVideoURL)!), thumbnailData)
                 self.uploadStates[id] = UploadState(progress: 0, isComplete: false, thumbnailImage: thumbnailImage)
                 
                 // Clean up temp file
                 try FileManager.default.removeItem(at: tempURL)
                 
             } catch {
-                print("❌ Video: Failed to load video: \(error.localizedDescription)")
+                print("❌ Video: Failed to process video: \(error.localizedDescription)")
                 self.uploadStates[id] = UploadState(progress: 0, isComplete: false, thumbnailImage: nil)
+                showError = true
+                errorMessage = "Failed to process video: \(error.localizedDescription)"
             }
         }
         

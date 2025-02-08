@@ -1,5 +1,8 @@
 import Foundation
 import FirebaseFirestore
+import FirebaseStorage
+import PhotosUI
+import SwiftUI
 import Combine
 
 @MainActor
@@ -9,14 +12,23 @@ class ProfileViewModel: ObservableObject {
     @Published private(set) var error: String?
     @Published var showImagePicker = false
     @Published var showEditProfile = false
+    @Published var selectedItem: PhotosPickerItem? {
+        didSet { Task { await loadTransferrable(from: selectedItem) } }
+    }
     
     private let db = Firestore.firestore()
+    private let storage = Storage.storage()
     private var cancellables = Set<AnyCancellable>()
     
     init() {
         print("👤 ProfileViewModel: Initializing")
     }
     
+    func clearError() {
+        self.error = nil
+    }
+    
+    @MainActor
     func loadUserData() async {
         guard let userId = UserDefaults.standard.string(forKey: "userId") else {
             print("❌ ProfileViewModel: No user ID found")
@@ -44,22 +56,28 @@ class ProfileViewModel: ObservableObject {
         isLoading = false
     }
     
+    @MainActor
     func updateProfile(username: String, email: String, bio: String?) async {
-        guard let userId = UserDefaults.standard.string(forKey: "userId") else { return }
+        guard let userId = UserDefaults.standard.string(forKey: "userId") else {
+            self.error = "User not logged in"
+            return
+        }
         
         print("✏️ ProfileViewModel: Updating profile for user: \(userId)")
         
         do {
-            var updateData: [String: Any] = [
+            let updateData: [String: Any] = [
                 "username": username,
-                "email": email
+                "email": email,
+                "bio": bio as Any
             ]
             
-            if let bio = bio {
-                updateData["bio"] = bio
+            // Create a local copy that's Sendable
+            @Sendable func updateUserData() async throws {
+                try await db.collection("users").document(userId).updateData(updateData)
             }
             
-            try await db.collection("users").document(userId).updateData(updateData)
+            try await updateUserData()
             print("✅ ProfileViewModel: Successfully updated profile")
             await loadUserData()
         } catch {
@@ -68,20 +86,46 @@ class ProfileViewModel: ObservableObject {
         }
     }
     
-    func updateProfilePicture(imageURL: String) async {
-        guard let userId = UserDefaults.standard.string(forKey: "userId") else { return }
-        
-        print("🖼️ ProfileViewModel: Updating profile picture for user: \(userId)")
+    @MainActor
+    private func loadTransferrable(from imageSelection: PhotosPickerItem?) async {
+        guard let imageSelection else { return }
         
         do {
+            if let data = try await imageSelection.loadTransferable(type: Data.self) {
+                await uploadProfileImage(data)
+            }
+        } catch {
+            print("❌ ProfileViewModel: Failed to load image data: \(error.localizedDescription)")
+            self.error = "Failed to load image"
+        }
+    }
+    
+    @MainActor
+    private func uploadProfileImage(_ imageData: Data) async {
+        guard let userId = UserDefaults.standard.string(forKey: "userId") else {
+            self.error = "User not logged in"
+            return
+        }
+        
+        print("🖼️ ProfileViewModel: Uploading profile image for user: \(userId)")
+        
+        do {
+            let storageRef = storage.reference().child("profile_pictures/\(userId).jpg")
+            let metadata = StorageMetadata()
+            metadata.contentType = "image/jpeg"
+            
+            _ = try await storageRef.putDataAsync(imageData, metadata: metadata)
+            let downloadURL = try await storageRef.downloadURL()
+            
             try await db.collection("users").document(userId).updateData([
-                "profilePicURL": imageURL
-            ])
-            print("✅ ProfileViewModel: Successfully updated profile picture")
+                "profilePicURL": downloadURL.absoluteString
+            ] as [String: Any])
+            
+            print("✅ ProfileViewModel: Successfully uploaded profile image")
             await loadUserData()
         } catch {
-            print("❌ ProfileViewModel: Error updating profile picture: \(error.localizedDescription)")
-            self.error = "Failed to update profile picture: \(error.localizedDescription)"
+            print("❌ ProfileViewModel: Error uploading profile image: \(error.localizedDescription)")
+            self.error = "Failed to upload profile image"
         }
     }
     
