@@ -25,7 +25,7 @@ struct ContentView: View {
                             Label("Second Brain", systemImage: "brain.head.profile")
                         }
                     
-                    VideoUploadButton()
+                    VideoUploadView()
                         .tabItem {
                             Label("Upload", systemImage: "video.badge.plus")
                         }

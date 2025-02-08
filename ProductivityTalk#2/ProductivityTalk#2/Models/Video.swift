@@ -11,7 +11,7 @@ enum VideoProcessingStatus: String, Codable {
 }
 
 struct Video: Identifiable, Codable {
-    let id: String
+    var id: String
     let ownerId: String
     let videoURL: String
     let thumbnailURL: String
@@ -25,6 +25,9 @@ struct Video: Identifiable, Codable {
     var processingStatus: VideoProcessingStatus
     var transcript: String?
     var extractedQuotes: [String]?
+    var autoTitle: String?
+    var autoDescription: String?
+    var autoTags: [String]?
     
     // Additional metadata for UI
     var ownerUsername: String
@@ -47,6 +50,9 @@ struct Video: Identifiable, Codable {
         case processingStatus
         case transcript
         case extractedQuotes
+        case autoTitle
+        case autoDescription
+        case autoTags
     }
     
     // Initialize from Firestore document
@@ -86,6 +92,9 @@ struct Video: Identifiable, Codable {
         self.processingStatus = processingStatus
         self.transcript = data["transcript"] as? String
         self.extractedQuotes = data["extractedQuotes"] as? [String]
+        self.autoTitle = data["autoTitle"] as? String
+        self.autoDescription = data["autoDescription"] as? String
+        self.autoTags = data["autoTags"] as? [String]
         
         print("✅ Video: Successfully initialized video with ID: \(id)")
     }
@@ -111,6 +120,9 @@ struct Video: Identifiable, Codable {
         self.processingStatus = .uploading
         self.transcript = nil
         self.extractedQuotes = nil
+        self.autoTitle = nil
+        self.autoDescription = nil
+        self.autoTags = nil
         
         print("✅ Video: Created new video with ID: \(id)")
     }
@@ -142,6 +154,18 @@ struct Video: Identifiable, Codable {
         
         if let extractedQuotes = extractedQuotes {
             data["extractedQuotes"] = extractedQuotes
+        }
+        
+        if let autoTitle = autoTitle {
+            data["autoTitle"] = autoTitle
+        }
+        
+        if let autoDescription = autoDescription {
+            data["autoDescription"] = autoDescription
+        }
+        
+        if let autoTags = autoTags {
+            data["autoTags"] = autoTags
         }
         
         print("✅ Video: Converted video data to Firestore format")

@@ -1,10 +1,16 @@
 import SwiftUI
 import AVKit
+import FirebaseFirestore
 
 struct VideoPlayerView: View {
     let video: Video
     @StateObject private var viewModel: VideoPlayerViewModel
     @State private var showComments = false
+    @State private var dragOffset: CGFloat = 0
+    @State private var showSaveConfirmation = false
+    @State private var showSaveError = false
+    @State private var errorMessage = ""
+    @Environment(\.scenePhase) private var scenePhase
     
     init(video: Video) {
         self.video = video
@@ -13,13 +19,121 @@ struct VideoPlayerView: View {
     
     var body: some View {
         ZStack {
-            // Video Player
             if let player = viewModel.player {
-                VideoPlayer(player: player)
+                CustomVideoPlayer(player: player)
                     .edgesIgnoringSafeArea(.all)
+                    .onAppear {
+                        print("▶️ VideoPlayer: Starting playback for video: \(video.id)")
+                        player.play()
+                    }
+                    .onDisappear {
+                        print("⏸️ VideoPlayer: Pausing playback for video: \(video.id)")
+                        player.pause()
+                    }
+                
+                // Video Controls Overlay
+                VStack {
+                    Spacer()
+                    
+                    // Video Information
+                    HStack(alignment: .bottom) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(video.title)
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            
+                            Text(video.description)
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.8))
+                                .lineLimit(2)
+                        }
+                        .padding()
+                        
+                        Spacer()
+                        
+                        // Right-side interaction buttons
+                        VStack(spacing: 20) {
+                            Button(action: viewModel.toggleLike) {
+                                Image(systemName: viewModel.isLiked ? "heart.fill" : "heart")
+                                    .font(.title)
+                                    .foregroundColor(viewModel.isLiked ? .red : .white)
+                            }
+                            
+                            Button(action: viewModel.toggleSave) {
+                                Image(systemName: viewModel.isSaved ? "bookmark.fill" : "bookmark")
+                                    .font(.title)
+                                    .foregroundColor(viewModel.isSaved ? .yellow : .white)
+                            }
+                            
+                            Button {
+                                viewModel.shareVideo()
+                            } label: {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.title)
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .padding(.trailing)
+                        .padding(.bottom, 40)
+                    }
+                }
             } else {
                 ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle())
+                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    .scaleEffect(1.5)
+            }
+            
+            // Save Confirmation Overlay
+            if showSaveConfirmation {
+                VStack {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 40))
+                        .foregroundColor(.green)
+                    Text("Saved to Second Brain!")
+                        .foregroundColor(.white)
+                        .font(.headline)
+                }
+                .padding()
+                .background(Color.black.opacity(0.7))
+                .cornerRadius(12)
+                .transition(.scale.combined(with: .opacity))
+            }
+            
+            // Error Overlay
+            if showSaveError {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.circle")
+                        .font(.system(size: 30))
+                        .foregroundColor(.red)
+                    Text("Failed to Save")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    Text(errorMessage)
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                }
+                .padding()
+                .background(Color.black.opacity(0.7))
+                .cornerRadius(12)
+                .transition(.scale.combined(with: .opacity))
+                .padding(.horizontal)
+            }
+            
+            // Swipe Indicator
+            if dragOffset > 0 {
+                HStack(spacing: 12) {
+                    Image(systemName: "brain.head.profile")
+                        .font(.system(size: 30))
+                    Text("Keep swiping to save")
+                        .font(.headline)
+                }
+                .foregroundColor(.white)
+                .padding()
+                .background(Color.black.opacity(0.7))
+                .cornerRadius(12)
+                .scaleEffect(min(1.0, dragOffset / 100))
+                .opacity(min(1.0, dragOffset / 100))
             }
             
             // Overlay Content
@@ -101,9 +215,11 @@ struct VideoPlayerView: View {
                         
                         // Share Button
                         VStack(spacing: 4) {
-                            Button(action: {}) {
-                                Image(systemName: "arrowshape.turn.up.right")
-                                    .font(.system(size: 28))
+                            Button {
+                                viewModel.shareVideo()
+                            } label: {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.title)
                                     .foregroundColor(.white)
                             }
                             Text("Share")
@@ -134,6 +250,18 @@ struct VideoPlayerView: View {
             CommentsView(video: video)
                 .presentationDetents([.medium, .large])
         }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            switch newPhase {
+            case .active:
+                print("📱 VideoPlayer: App became active - resuming playback")
+                viewModel.player?.play()
+            case .inactive, .background:
+                print("📱 VideoPlayer: App became inactive/background - pausing playback")
+                viewModel.player?.pause()
+            @unknown default:
+                break
+            }
+        }
     }
     
     private func formatCount(_ count: Int) -> String {
@@ -144,6 +272,23 @@ struct VideoPlayerView: View {
         } else {
             return "\(count)"
         }
+    }
+}
+
+struct CustomVideoPlayer: UIViewControllerRepresentable {
+    let player: AVPlayer
+    
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        print("🎥 CustomVideoPlayer: Creating new AVPlayerViewController")
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.showsPlaybackControls = false
+        controller.videoGravity = .resizeAspectFill
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
+        // Update if needed
     }
 }
 

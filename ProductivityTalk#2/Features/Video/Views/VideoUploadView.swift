@@ -8,83 +8,111 @@ struct VideoUploadView: View {
     
     var body: some View {
         NavigationView {
-            Form {
-                Section(header: Text("Video Details")) {
-                    if let thumbnail = viewModel.thumbnailImage {
-                        Image(uiImage: thumbnail)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(height: 200)
-                            .clipped()
-                    }
-                    
-                    let isVideoSelected = viewModel.selectedItem != nil
-                    
-                    PhotosPicker(
-                        selection: $viewModel.selectedItem,
-                        matching: .videos,
-                        photoLibrary: .shared()
-                    ) {
-                        Label(
-                            isVideoSelected ? "Change Video" : "Select Video",
-                            systemImage: "video.badge.plus"
-                        )
-                    }
-                    .onChange(of: viewModel.selectedItem) { oldValue, newValue in
-                        Task { @MainActor in
-                            await viewModel.loadVideo()
-                        }
-                    }
-                    
-                    TextField("Title", text: $viewModel.title)
-                        .textContentType(.none)
-                    
-                    TextField("Tags (comma separated)", text: $viewModel.tagsInput)
-                        .textContentType(.none)
-                    
-                    TextField("Description", text: $viewModel.description, axis: .vertical)
-                        .textContentType(.none)
-                        .lineLimit(4...6)
-                }
+            ZStack {
+                Color(.systemBackground)
+                    .edgesIgnoringSafeArea(.all)
                 
-                Section {
-                    Button(action: upload) {
-                        if viewModel.isUploading {
-                            HStack {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle())
-                                Text("Uploading... \(Int(viewModel.uploadProgress * 100))%")
+                VStack(spacing: 20) {
+                    if viewModel.uploadStates.isEmpty {
+                        // Upload Box
+                        PhotosPicker(
+                            selection: $viewModel.selectedItems,
+                            matching: .videos,
+                            photoLibrary: .shared()
+                        ) {
+                            VStack(spacing: 12) {
+                                Image(systemName: "video.badge.plus")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(.blue)
+                                
+                                Text("Click to Upload Videos")
+                                    .font(.headline)
+                                
+                                Text("Select one or more videos")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
                             }
-                        } else {
-                            Text("Upload Video")
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 200)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [10]))
+                                    .foregroundColor(.blue.opacity(0.3))
+                            )
+                            .padding(.horizontal, 20)
+                        }
+                        .onChange(of: viewModel.selectedItems) { oldValue, newValue in
+                            if !newValue.isEmpty {
+                                Task { @MainActor in
+                                    await viewModel.loadVideos()
+                                }
+                            }
+                        }
+                    } else {
+                        // Upload Progress
+                        ScrollView {
+                            VStack(spacing: 16) {
+                                ForEach(Array(viewModel.uploadStates.keys), id: \.self) { id in
+                                    if let state = viewModel.uploadStates[id] {
+                                        HStack(spacing: 16) {
+                                            // Thumbnail
+                                            if let thumbnail = state.thumbnailImage {
+                                                Image(uiImage: thumbnail)
+                                                    .resizable()
+                                                    .aspectRatio(contentMode: .fill)
+                                                    .frame(width: 60, height: 60)
+                                                    .cornerRadius(8)
+                                            } else {
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .fill(Color.gray.opacity(0.3))
+                                                    .frame(width: 60, height: 60)
+                                            }
+                                            
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text("Video \(id.prefix(8))")
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.primary)
+                                                
+                                                // Progress or Checkmark
+                                                if state.isComplete {
+                                                    Label("Complete", systemImage: "checkmark.circle.fill")
+                                                        .foregroundColor(.green)
+                                                        .font(.subheadline)
+                                                } else {
+                                                    ProgressView(value: state.progress) {
+                                                        Text("\(Int(state.progress * 100))%")
+                                                            .font(.caption)
+                                                            .foregroundColor(.secondary)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        .padding()
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .fill(Color(.secondarySystemBackground))
+                                        )
+                                        .padding(.horizontal)
+                                    }
+                                }
+                            }
+                            .padding(.vertical)
                         }
                     }
-                    .frame(maxWidth: .infinity)
-                    .disabled(!viewModel.canUpload || viewModel.isUploading)
                 }
             }
-            .navigationTitle("Upload Video")
+            .navigationTitle("Upload Videos")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
                         dismiss()
                     }
-                    .disabled(viewModel.isUploading)
                 }
             }
             .alert("Error", isPresented: $viewModel.showError) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(viewModel.errorMessage ?? "An unknown error occurred")
-            }
-        }
-    }
-    
-    private func upload() {
-        Task { @MainActor in
-            await viewModel.uploadVideo()
-            if !viewModel.showError {
-                dismiss()
             }
         }
     }
