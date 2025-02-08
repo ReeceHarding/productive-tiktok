@@ -115,150 +115,46 @@ class VideoFeedViewModel: ObservableObject {
     }
     
     private func preloadVideo(for video: Video) {
-        guard let url = URL(string: video.videoURL) else {
-            LoggingService.error("Invalid video URL for \(video.id)", component: "Feed")
+        // Skip preloading if the video is not ready or videoURL is empty
+        if video.processingStatus != .ready || video.videoURL.isEmpty {
+            LoggingService.debug("Skipping preload for video \(video.id) because processingStatus is \(video.processingStatus.rawValue) or videoURL is empty", component: "Feed")
             return
         }
+        
+        guard let url = URL(string: video.videoURL) else {
+            LoggingService.error("Invalid video URL for video: \(video.id)", component: "Feed")
+            return
+        }
+        
+        LoggingService.debug("Preloading video: \(video.id)", component: "Feed")
         
         let preloadTask = Task<Void, Never> {
-            // Create asset with optimized loading options
             let asset = AVURLAsset(url: url, options: [
                 AVURLAssetPreferPreciseDurationAndTimingKey: true,
                 "AVURLAssetOutOfBandMIMETypeKey": "video/mp4",
-                "AVURLAssetHTTPHeaderFieldsKey": ["Range": "bytes=0-"],
                 "AVAssetPreferredForwardBufferDurationKey": 2.0
             ])
             
-            // Configure asset for optimal loading using the shared delegate
-            asset.resourceLoader.setDelegate(VideoResourceLoaderDelegate.shared, queue: .global(qos: .userInitiated))
-            
-            // Create optimized player item with resource conservation
-            let playerItem = AVPlayerItem(asset: asset)
-            playerItem.preferredForwardBufferDuration = 2.0
-            playerItem.preferredPeakBitRate = 3_000_000 // 3 Mbps for good quality while maintaining speed
-            playerItem.automaticallyPreservesTimeOffsetFromLive = false
-            playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = false
-            
-            let player = AVPlayer(playerItem: playerItem)
-            player.automaticallyWaitsToMinimizeStalling = false
-            player.volume = 0
-            player.isMuted = true
-            player.appliesMediaSelectionCriteriaAutomatically = false
-            
-            // Store the preloaded player
-            preloadedPlayers[video.id] = player
-            
-            do {
-                // Load essential properties asynchronously with timeout
-                try await withThrowingTaskGroup(of: Void.self) { group in
-                    group.addTask(priority: .userInitiated) {
-                        try await self.withTimeout(seconds: 5.0) { () -> Void in
-                            let isPlayable = try await asset.load(.isPlayable)
-                            guard isPlayable else {
-                                throw VideoPlayerError.assetNotPlayable
-                            }
-                        }
-                    }
-                    
-                    try await group.waitForAll()
-                }
-                
-                // Start minimal buffering
-                player.play()
-                try? await Task.sleep(nanoseconds: UInt64(0.1 * 1_000_000_000))
-                player.pause()
-                
-                LoggingService.debug("✅ Successfully preloaded video \(video.id)", component: "Feed")
-            } catch {
-                LoggingService.error("Failed to preload video \(video.id): \(error.localizedDescription)", component: "Feed")
-                preloadedPlayers.removeValue(forKey: video.id)
-            }
-        }
-        
-        preloadTasks[video.id] = preloadTask
-    }
-    
-    private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask(priority: .userInitiated) {
-                try await operation()
-            }
-            
-            group.addTask(priority: .userInitiated) {
-                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw NSError(domain: "TimeoutError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Operation timed out"])
-            }
-            
-            guard let result = try await group.next() else {
-                throw NSError(domain: "TimeoutError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Operation completed with no result"])
-            }
-            group.cancelAll()
-            return result
-        }
-    }
-    
-    func preloadVideo(at index: Int) {
-        guard index >= 0 && index < videos.count else {
-            print("⚠️ VideoFeed: Invalid index for preloading")
-            return
-        }
-        
-        let video = videos[index]
-        
-        // Check if already preloaded
-        if preloadedPlayers[video.id] != nil {
-            print("ℹ️ VideoFeed: Video already preloaded: \(video.id)")
-            return
-        }
-        
-        guard let url = URL(string: video.videoURL) else {
-            print("❌ VideoFeed: Invalid URL for video: \(video.id)")
-            return
-        }
-        
-        print("⏳ VideoFeed: Preloading video: \(video.id)")
-        
-        // Cancel any existing preload task for this video
-        preloadTasks[video.id]?.cancel()
-        
-        // Create new preload task with high priority
-        let preloadTask = Task<Void, Never>(priority: .userInitiated) {
-            // Create asset with optimized loading options
-            let asset = AVURLAsset(url: url, options: [
-                AVURLAssetPreferPreciseDurationAndTimingKey: true,
-                "AVURLAssetOutOfBandMIMETypeKey": "video/mp4",
-                "AVURLAssetHTTPHeaderFieldsKey": ["Range": "bytes=0-"],
-                "AVAssetPreferredForwardBufferDurationKey": 2.0
-            ])
-            
-            // Configure asset for optimal loading using the shared delegate
             asset.resourceLoader.setDelegate(VideoResourceLoaderDelegate.shared, queue: .global(qos: .userInitiated))
             
             let playerItem = AVPlayerItem(asset: asset)
             playerItem.preferredForwardBufferDuration = 2.0
             playerItem.preferredPeakBitRate = 3_000_000
-            playerItem.automaticallyPreservesTimeOffsetFromLive = false
             
             let player = AVPlayer(playerItem: playerItem)
             player.automaticallyWaitsToMinimizeStalling = false
             player.volume = 0
-            player.isMuted = true
-            
-            // Store the preloaded player immediately
             preloadedPlayers[video.id] = player
             
             do {
-                // Load minimal required properties
                 let isPlayable = try await asset.load(.isPlayable)
                 guard isPlayable else {
                     throw VideoPlayerError.assetNotPlayable
                 }
-                
-                // Start buffering immediately
                 player.play()
+                try? await Task.sleep(nanoseconds: UInt64(0.1 * 1_000_000_000))
                 player.pause()
-                
-                LoggingService.debug("✅ Successfully preloaded video \(video.id)", component: "Feed")
+                LoggingService.success("Successfully preloaded video \(video.id)", component: "Feed")
             } catch {
                 LoggingService.error("Failed to preload video \(video.id): \(error.localizedDescription)", component: "Feed")
                 preloadedPlayers.removeValue(forKey: video.id)
@@ -266,8 +162,70 @@ class VideoFeedViewModel: ObservableObject {
         }
         
         preloadTasks[video.id] = preloadTask
+    }
+    
+    func preloadVideo(at index: Int) {
+        guard index >= 0 && index < videos.count else {
+            LoggingService.error("Invalid index for preloading", component: "Feed")
+            return
+        }
         
-        // Cleanup old preloaded videos
+        let video = videos[index]
+        
+        // Skip preloading if video is not ready
+        if video.processingStatus != .ready || video.videoURL.isEmpty {
+            LoggingService.debug("Skipping preload for video \(video.id) at index \(index) because it is not ready", component: "Feed")
+            return
+        }
+        
+        if preloadedPlayers[video.id] != nil {
+            LoggingService.debug("Video already preloaded: \(video.id)", component: "Feed")
+            return
+        }
+        
+        guard let url = URL(string: video.videoURL) else {
+            LoggingService.error("Invalid URL for video: \(video.id)", component: "Feed")
+            return
+        }
+        
+        LoggingService.debug("Preloading video at index \(index): \(video.id)", component: "Feed")
+        
+        preloadTasks[video.id]?.cancel()
+        
+        let preloadTask = Task<Void, Never>(priority: .userInitiated) {
+            let asset = AVURLAsset(url: url, options: [
+                AVURLAssetPreferPreciseDurationAndTimingKey: true,
+                "AVURLAssetOutOfBandMIMETypeKey": "video/mp4",
+                "AVAssetPreferredForwardBufferDurationKey": 2.0
+            ])
+            
+            asset.resourceLoader.setDelegate(VideoResourceLoaderDelegate.shared, queue: .global(qos: .userInitiated))
+            
+            let playerItem = AVPlayerItem(asset: asset)
+            playerItem.preferredForwardBufferDuration = 2.0
+            playerItem.preferredPeakBitRate = 3_000_000
+            
+            let player = AVPlayer(playerItem: playerItem)
+            player.automaticallyWaitsToMinimizeStalling = false
+            player.volume = 0
+            preloadedPlayers[video.id] = player
+            
+            do {
+                let isPlayable = try await asset.load(.isPlayable)
+                guard isPlayable else {
+                    throw VideoPlayerError.assetNotPlayable
+                }
+                player.play()
+                player.pause()
+                LoggingService.success("Successfully preloaded video \(video.id) at index \(index)", component: "Feed")
+            } catch {
+                LoggingService.error("Failed to preload video \(video.id) at index \(index): \(error.localizedDescription)", component: "Feed")
+                preloadedPlayers.removeValue(forKey: video.id)
+            }
+        }
+        
+        preloadTasks[video.id] = preloadTask
+        
         cleanupPreloadedVideos(currentIndex: index)
     }
     

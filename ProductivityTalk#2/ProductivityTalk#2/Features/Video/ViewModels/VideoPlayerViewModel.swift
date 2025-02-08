@@ -116,13 +116,17 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
         LoggingService.video("🎬 Starting player setup for video \(video.id)", component: "Player")
         LoggingService.debug("Video URL: \(video.videoURL)", component: "Player")
         LoggingService.debug("Processing status: \(video.processingStatus.rawValue)", component: "Player")
-        LoggingService.debug("Thermal state before setup: \(ProcessInfo.processInfo.thermalState)", component: "Player")
         
-        // Ensure cleanup is complete before setting up
+        // Skip setup if video is not ready or URL is empty
+        if video.processingStatus != .ready || video.videoURL.isEmpty {
+            LoggingService.error("Player setup aborted: video \(video.id) is not ready or videoURL is empty", component: "Player")
+            return
+        }
+        
         await cleanup()
         
-        // Add a small delay after cleanup for audio session stability
-        try? await Task.sleep(nanoseconds: UInt64(0.1 * 1_000_000_000))
+        // Reduced delay for faster setup
+        try? await Task.sleep(nanoseconds: UInt64(0.05 * 1_000_000_000))
         LoggingService.debug("⏱️ Post-cleanup delay completed for video \(video.id)", component: "Player")
         
         do {
@@ -164,8 +168,8 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
         let player = AVPlayer(playerItem: playerItem)
         
         // Configure player for optimal performance
-        player.automaticallyWaitsToMinimizeStalling = false // We handle preloading ourselves
-        player.volume = 0 // Start with volume at 0 to prevent audio bleed
+        player.automaticallyWaitsToMinimizeStalling = false
+        player.volume = 0  // Start at 0 to allow fade in
         player.appliesMediaSelectionCriteriaAutomatically = false
         player.preventsDisplaySleepDuringVideoPlayback = true
         
@@ -189,6 +193,10 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
         // Update state
         self.player = player
         isPlaying = true
+        
+        Task { @MainActor in
+            await fadeInAudio()
+        }
         
         LoggingService.video("✅ Player setup completed for video \(video.id)", component: "Player")
     }
@@ -523,10 +531,17 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
     
     func saveToSecondBrain() async throws {
         guard let userId = AuthenticationManager.shared.currentUser?.uid else {
+            LoggingService.error("❌ Second Brain: No authenticated user found", component: "Player")
             throw NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "No authenticated user"])
         }
         
-        LoggingService.video("Saving video to Second Brain", component: "Player")
+        LoggingService.debug("🎬 Second Brain: Starting save process for video ID: \(video.id)", component: "Player")
+        LoggingService.debug("📝 Second Brain: Content to save:", component: "Player")
+        LoggingService.debug("   - Title: \(video.title)", component: "Player")
+        LoggingService.debug("   - Description: \(video.description)", component: "Player")
+        LoggingService.debug("   - Transcript Length: \(video.transcript?.count ?? 0) characters", component: "Player")
+        LoggingService.debug("   - Number of Quotes: \(video.extractedQuotes?.count ?? 0)", component: "Player")
+        LoggingService.debug("   - Tags: \(video.tags.joined(separator: ", "))", component: "Player")
         
         let secondBrainRef = firestore.collection("users")
             .document(userId)
@@ -550,11 +565,13 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
             let videoDoc = try await firestore.collection("videos").document(video.id).getDocument()
             
             if !videoDoc.exists {
-                LoggingService.error("Video document does not exist: \(video.id)", component: "Player")
+                LoggingService.error("❌ Second Brain: Video document does not exist: \(video.id)", component: "Player")
                 throw NSError(domain: "VideoPlayer", 
                             code: -2, 
                             userInfo: [NSLocalizedDescriptionKey: "Video no longer exists"])
             }
+            
+            LoggingService.debug("✅ Second Brain: Video document exists, proceeding with save", component: "Player")
             
             // Start a batch write to ensure atomicity
             let batch = firestore.batch()
@@ -575,9 +592,12 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
                 self.video.saveCount += 1
             }
             
-            LoggingService.success("Successfully saved video to Second Brain", component: "Player")
+            LoggingService.success("✅ Second Brain: Successfully saved video", component: "Player")
+            LoggingService.debug("📊 Second Brain: Updated statistics:", component: "Player")
+            LoggingService.debug("   - New Save Count: \(self.video.saveCount)", component: "Player")
+            LoggingService.debug("   - Second Brain Entry ID: \(secondBrainRef.documentID)", component: "Player")
         } catch {
-            LoggingService.error("Failed to save to Second Brain: \(error.localizedDescription)", component: "Player")
+            LoggingService.error("❌ Second Brain: Failed to save: \(error.localizedDescription)", component: "Player")
             throw error
         }
     }
@@ -617,23 +637,25 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
     }
     
     private func fadeInAudio() async {
-        guard let player = player, !isMuted else { return }
+        guard let player = player else { return }
         
-        LoggingService.debug("🔊 Starting audio fade in for video \(video.id)", component: "Player")
+        // Ensure player is unmuted for audio fade in
+        if isMuted {
+            isMuted = false
+            LoggingService.debug("Unmuting player for fade in", component: "Player")
+        }
+        
         let fadeTime = 0.3
         let steps = 5
         let targetVolume: Float = 1.0
-        let startVolume: Float = 0.0
+        let volumeIncrement = targetVolume / Float(steps)
         
         for i in 0...steps {
             let delay = fadeTime * Double(i) / Double(steps)
-            let volume = startVolume + (targetVolume - startVolume) * Float(i) / Float(steps)
-            
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            player.volume = volume
-            
+            player.volume = Float(i) * volumeIncrement
             if i == steps {
-                LoggingService.debug("🔊 Audio fade in completed for video \(video.id)", component: "Player")
+                LoggingService.debug("Audio fade in completed for video \(video.id)", component: "Player")
             }
         }
     }
