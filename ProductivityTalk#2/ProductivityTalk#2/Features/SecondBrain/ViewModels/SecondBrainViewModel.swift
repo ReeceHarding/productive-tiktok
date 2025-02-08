@@ -23,23 +23,58 @@ class SecondBrainViewModel: ObservableObject {
         }
         
         isLoading = true
-        print("📥 SecondBrainViewModel: Loading user data for ID: \(userId)")
+        print("\n📥 SecondBrainViewModel: Starting user data load")
+        print("👤 User ID: \(userId)")
         
         do {
+            print("🔍 Querying Firestore: users/\(userId)")
             let document = try await db.collection("users").document(userId).getDocument()
-            if let user = AppUser(document: document) {
-                self.user = user
-                print("✅ SecondBrainViewModel: Successfully loaded user data")
+            
+            print("\n📄 Document Data Retrieved:")
+            if let data = document.data() {
+                print("   - Document exists")
+                print("   - Fields found: \(data.keys.joined(separator: ", "))")
+                
+                // Print specific statistics
+                print("\n📊 Second Brain Statistics:")
+                print("   - Total Second Brain Saves: \(data["totalSecondBrainSaves"] as? Int ?? 0)")
+                print("   - Total Quotes Saved: \(data["totalQuotesSaved"] as? Int ?? 0)")
+                print("   - Total Transcripts Saved: \(data["totalTranscriptsSaved"] as? Int ?? 0)")
+                print("\n📈 Growth Rates:")
+                print("   - Weekly Growth: \(String(format: "%.1f%%", (data["weeklySecondBrainGrowth"] as? Double ?? 0) * 100))")
+                print("   - Monthly Growth: \(String(format: "%.1f%%", (data["monthlySecondBrainGrowth"] as? Double ?? 0) * 100))")
+                print("   - Yearly Growth: \(String(format: "%.1f%%", (data["yearlySecondBrainGrowth"] as? Double ?? 0) * 100))")
+                print("\n🎯 Engagement:")
+                print("   - Video Engagement Rate: \(String(format: "%.1f%%", (data["videoEngagementRate"] as? Double ?? 0) * 100))")
+                print("   - Comment Engagement Rate: \(String(format: "%.1f%%", (data["commentEngagementRate"] as? Double ?? 0) * 100))")
+                print("   - Second Brain Engagement Rate: \(String(format: "%.1f%%", (data["secondBrainEngagementRate"] as? Double ?? 0) * 100))")
+                
+                if let user = AppUser(document: document) {
+                    self.user = user
+                    print("\n✅ SecondBrainViewModel: Successfully parsed user data")
+                    print("   - Username: \(user.username)")
+                    print("   - Total Videos: \(user.totalVideosUploaded)")
+                    print("   - Total Views: \(user.totalVideoViews)")
+                    print("   - Current Streak: \(user.currentStreak)")
+                    print("   - Longest Streak: \(user.longestStreak)")
+                } else {
+                    print("\n❌ SecondBrainViewModel: Failed to parse user data")
+                    print("   - Document exists but could not be parsed into AppUser")
+                    self.error = "Failed to parse user data"
+                }
             } else {
-                print("❌ SecondBrainViewModel: Failed to parse user data")
-                self.error = "Failed to load user data"
+                print("\n❌ SecondBrainViewModel: Document does not exist")
+                self.error = "User document not found"
             }
         } catch {
-            print("❌ SecondBrainViewModel: Error loading user data: \(error.localizedDescription)")
+            print("\n❌ SecondBrainViewModel: Error loading user data")
+            print("   - Error: \(error.localizedDescription)")
+            print("   - Collection path: users/\(userId)")
             self.error = "Failed to load user data: \(error.localizedDescription)"
         }
         
         isLoading = false
+        print("\n🏁 SecondBrainViewModel: Finished loading user data")
     }
     
     func updateStatistics() async {

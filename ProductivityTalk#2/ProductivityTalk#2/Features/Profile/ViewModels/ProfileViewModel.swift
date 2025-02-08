@@ -133,7 +133,7 @@ class ProfileViewModel: ObservableObject {
     func signOut() async {
         print("🚪 ProfileViewModel: Attempting to sign out user")
         do {
-            try AuthenticationManager.shared.signOut()
+            try await AuthenticationManager.shared.signOut()
             print("✅ ProfileViewModel: Successfully signed out user")
             self.user = nil
         } catch {

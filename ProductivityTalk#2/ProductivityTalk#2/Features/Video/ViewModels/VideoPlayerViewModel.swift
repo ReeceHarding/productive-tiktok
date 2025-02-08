@@ -27,6 +27,10 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
     private let firestore = Firestore.firestore()
     private var cleanupTask: Task<Void, Never>?
     private var processingStatusListener: ListenerRegistration?
+    private var retryTimer: Timer?
+    private let retryInterval: TimeInterval = 5.0
+    private var retryCount: Int = 0
+    private let maxRetries: Int = 12
     
     init(video: Video) {
         self.video = video
@@ -55,7 +59,7 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
     private func setupProcessingStatusListener() {
         LoggingService.video("Setting up processing status listener for video \(video.id)", component: "Player")
         LoggingService.debug("Initial processing status: \(video.processingStatus.rawValue)", component: "Player")
-        LoggingService.debug("Initial isProcessing value: \(isProcessing)", component: "Player")
+        LoggingService.debug("Initial videoURL: \(video.videoURL)", component: "Player")
         LoggingService.debug("Initial player state: \(String(describing: player))", component: "Player")
         
         processingStatusListener = firestore.collection("videos")
@@ -76,37 +80,61 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
                     return
                 }
                 
-                LoggingService.debug("Received document update for video \(self.video.id)", component: "Player")
-                LoggingService.debug("Document exists: \(document.exists)", component: "Player")
+                LoggingService.debug("📥 Received Firestore update for video \(self.video.id)", component: "Player")
                 
                 guard let data = document.data(),
                       let statusRaw = data["processingStatus"] as? String,
                       let status = VideoProcessingStatus(rawValue: statusRaw) else {
-                    LoggingService.error("Invalid processing status data for video \(self.video.id)", component: "Player")
-                    LoggingService.debug("Document data: \(String(describing: document.data()))", component: "Player")
+                    LoggingService.error("❌ Invalid or missing data in document: \(String(describing: document.data()))", component: "Player")
                     return
                 }
                 
                 Task { @MainActor in
                     let wasProcessing = self.isProcessing
                     let oldStatus = self.video.processingStatus
+                    let oldURL = self.video.videoURL
                     
-                    // Update video object with new status
+                    // Update video object with new status and URL
                     self.video.processingStatus = status
+                    if let newURL = data["videoURL"] as? String {
+                        // Only log if URL changed
+                        if newURL != oldURL {
+                            LoggingService.debug("🔄 Video URL updated:", component: "Player")
+                            LoggingService.debug("- Old URL: \(oldURL)", component: "Player")
+                            LoggingService.debug("- New URL: \(newURL)", component: "Player")
+                            self.video.videoURL = newURL
+                        }
+                    }
                     
                     // Update isProcessing based on status
                     self.isProcessing = status != .ready
                     
-                    LoggingService.video("Processing status changed for video \(self.video.id)", component: "Player")
+                    LoggingService.video("📊 Status update for video \(self.video.id):", component: "Player")
                     LoggingService.debug("- Old status: \(oldStatus.rawValue)", component: "Player")
                     LoggingService.debug("- New status: \(status.rawValue)", component: "Player")
                     LoggingService.debug("- Was processing: \(wasProcessing)", component: "Player")
                     LoggingService.debug("- Is processing: \(self.isProcessing)", component: "Player")
                     
-                    // If transitioning from processing to ready, ensure player is set up
-                    if wasProcessing && !self.isProcessing {
-                        LoggingService.video("🎬 Video ready - setting up player", component: "Player")
+                    // If video becomes ready or URL becomes available, attempt setup
+                    if (wasProcessing && !self.isProcessing) || 
+                       (oldURL.isEmpty && !self.video.videoURL.isEmpty) {
+                        LoggingService.video("🎬 Video ready or URL available - setting up player", component: "Player")
+                        // Reset retry count since we got a new update
+                        self.retryCount = 0
+                        self.retryTimer?.invalidate() // Cancel any pending retries
                         await self.setupPlayer()
+                    } else if status == .error {
+                        // If video processing failed, cancel retries and show error
+                        LoggingService.error("❌ Video processing failed for \(self.video.id)", component: "Player")
+                        self.retryTimer?.invalidate()
+                        self.retryTimer = nil
+                        self.retryCount = self.maxRetries
+                        self.playerError = "Video processing failed"
+                        
+                        // Log the error details if available
+                        if let processingError = data["processingError"] as? String {
+                            LoggingService.error("Processing error details: \(processingError)", component: "Player")
+                        }
                     }
                 }
             }
@@ -114,91 +142,80 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
     
     private func setupPlayer() async {
         LoggingService.video("🎬 Starting player setup for video \(video.id)", component: "Player")
-        LoggingService.debug("Video URL: \(video.videoURL)", component: "Player")
-        LoggingService.debug("Processing status: \(video.processingStatus.rawValue)", component: "Player")
         
-        // Skip setup if video is not ready or URL is empty
-        if video.processingStatus != .ready || video.videoURL.isEmpty {
-            LoggingService.error("Player setup aborted: video \(video.id) is not ready or videoURL is empty", component: "Player")
+        guard !video.videoURL.isEmpty, let url = URL(string: video.videoURL) else {
+            if retryCount == 0 {
+                LoggingService.debug("Initial setup: Waiting for video URL for \(video.id) (Status: \(video.processingStatus.rawValue))", component: "Player")
+            }
+            
+            if retryCount < maxRetries && video.processingStatus != .error {
+                if retryCount % 4 == 0 { // Only log every 4th retry
+                    LoggingService.debug("Still waiting for video URL (Attempt \(retryCount + 1)/\(maxRetries))", component: "Player")
+                }
+                retryTimer?.invalidate()
+                retryTimer = Timer.scheduledTimer(withTimeInterval: retryInterval, repeats: false) { [weak self] _ in
+                    guard let self = self else { return }
+                    self.retryCount += 1
+                    Task { @MainActor in
+                        await self.setupPlayer()
+                    }
+                }
+            } else if retryCount >= maxRetries {
+                LoggingService.error("❌ Max retries exceeded for video \(video.id)", component: "Player")
+                self.playerError = "Failed to load video after multiple attempts"
+            }
             return
         }
+        
+        retryCount = 0
+        retryTimer?.invalidate()
+        retryTimer = nil
         
         await cleanup()
         
-        // Reduced delay for faster setup
-        try? await Task.sleep(nanoseconds: UInt64(0.05 * 1_000_000_000))
-        LoggingService.debug("⏱️ Post-cleanup delay completed for video \(video.id)", component: "Player")
-        
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try session.setActive(true)
-            LoggingService.debug("🔊 Audio session configured and activated for video \(video.id)", component: "Player")
-        } catch {
-            LoggingService.error("❌ Failed to configure audio session for video \(video.id): \(error)", component: "Player")
-            return
-        }
-        
-        guard let url = URL(string: video.videoURL) else {
-            LoggingService.error("❌ Invalid URL for video \(video.id): \(video.videoURL)", component: "Player")
-            return
-        }
-        
-        LoggingService.debug("🔍 Creating AVPlayer with URL: \(url.absoluteString)", component: "Player")
-        
-        let asset = AVURLAsset(url: url, options: [
+        let assetOptions: [String: Any] = [
             AVURLAssetPreferPreciseDurationAndTimingKey: true,
             "AVURLAssetOutOfBandMIMETypeKey": "video/mp4",
-            "AVAssetPreferredForwardBufferDurationKey": 2.0,
-            "AVURLAssetHTTPHeaderFieldsKey": ["Range": "bytes=0-"]
-        ])
+            "AVAssetPreferredForwardBufferDurationKey": 2.0
+        ]
+        let asset = AVURLAsset(url: url, options: assetOptions)
+        LoggingService.debug("🔍 [PlayerVM] Created AVURLAsset with URL: \(url.absoluteString)", component: "Player")
         
-        asset.resourceLoader.setDelegate(VideoResourceLoaderDelegate.shared, queue: DispatchQueue.global(qos: .userInitiated))
-        
-        let playerItem = AVPlayerItem(asset: asset)
-        
-        // Optimize playback settings
-        playerItem.preferredForwardBufferDuration = 2.0
-        playerItem.preferredPeakBitRate = 3_000_000 // 3 Mbps for good quality while maintaining speed
-        playerItem.automaticallyPreservesTimeOffsetFromLive = false
-        
-        // Add performance optimization hints
-        playerItem.canUseNetworkResourcesForLiveStreamingWhilePaused = false
-        
-        let player = AVPlayer(playerItem: playerItem)
-        
-        // Configure player for optimal performance
-        player.automaticallyWaitsToMinimizeStalling = false
-        player.volume = 0  // Start at 0 to allow fade in
-        player.appliesMediaSelectionCriteriaAutomatically = false
-        player.preventsDisplaySleepDuringVideoPlayback = true
-        
-        // Set video gravity for better performance
-        if let playerLayer = player.currentItem?.asset as? AVPlayerLayer {
-            playerLayer.videoGravity = AVLayerVideoGravity.resizeAspectFill
+        let requiredKeys = ["playable", "preferredTransform"]
+        do {
+            // Execute asset key loading on a background thread to avoid blocking the main actor.
+            try await Task.detached(priority: .userInitiated) {
+                try await asset.loadValuesAsync(keys: requiredKeys)
+            }.value
+            LoggingService.debug("✅ [PlayerVM] Asset keys loaded successfully for video \(video.id)", component: "Player")
+        } catch {
+            LoggingService.error("❌ [PlayerVM] Failed to load asset keys: \(error.localizedDescription)", component: "Player")
+            self.playerError = "Asset failed to load required keys."
+            return
         }
         
-        LoggingService.debug("⚙️ Player configured for video \(video.id) with initial volume 0", component: "Player")
+        let playerItem = AVPlayerItem(asset: asset)
+        LoggingService.debug("🔍 [PlayerVM] Created AVPlayerItem for video \(video.id)", component: "Player")
         
-        // Set up observers
-        setupTimeObserver(for: player)
+        playerItem.preferredForwardBufferDuration = 2.0
+        playerItem.preferredPeakBitRate = 3_000_000
+        
+        let newPlayer = AVPlayer(playerItem: playerItem)
+        newPlayer.automaticallyWaitsToMinimizeStalling = false
+        newPlayer.volume = 0
+        self.player = newPlayer
+        self.isPlaying = true
+        LoggingService.debug("🎥 [PlayerVM] AVPlayer configured for video \(video.id) with initial volume 0", component: "Player")
+        
+        setupTimeObserver(for: newPlayer)
         setupStatusObserver(for: playerItem)
         setupNotificationObservers()
-        
-        // Add buffer monitoring
-        setupBufferMonitoring(for: playerItem)
-        
-        LoggingService.debug("👀 Observers set up for video \(video.id)", component: "Player")
-        
-        // Update state
-        self.player = player
-        isPlaying = true
         
         Task { @MainActor in
             await fadeInAudio()
         }
         
-        LoggingService.video("✅ Player setup completed for video \(video.id)", component: "Player")
+        LoggingService.debug("✅ [PlayerVM] Player setup completed for video \(video.id)", component: "Player")
     }
     
     private func setupBufferMonitoring(for playerItem: AVPlayerItem) {
@@ -222,6 +239,11 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
         LoggingService.debug("Player state: \(String(describing: player))", component: "Player")
         LoggingService.debug("Is playing: \(isPlaying)", component: "Player")
         LoggingService.debug("Thermal state before cleanup: \(ProcessInfo.processInfo.thermalState)", component: "Player")
+        
+        // Cancel retry timer
+        retryTimer?.invalidate()
+        retryTimer = nil
+        retryCount = 0
         
         // Remove observers first
         if let timeObserver = timeObserver {

@@ -10,7 +10,7 @@ enum VideoProcessingStatus: String, Codable {
 struct Video: Identifiable, Codable {
     var id: String
     let ownerId: String
-    let videoURL: String
+    var videoURL: String
     let thumbnailURL: String?
     let title: String
     var tags: [String]

@@ -139,10 +139,16 @@ class CommentsViewModel: ObservableObject {
     
     func toggleSecondBrain(for comment: Comment) async {
         guard Auth.auth().currentUser != nil else {
-            print("❌ CommentsViewModel: No authenticated user")
+            LoggingService.error("❌ Second Brain: No authenticated user", component: "Comments")
             self.error = "Please sign in to add to Second Brain"
             return
         }
+        
+        LoggingService.debug("🎬 Second Brain: Starting toggle process for comment ID: \(comment.id)", component: "Comments")
+        LoggingService.debug("📝 Second Brain: Comment content:", component: "Comments")
+        LoggingService.debug("   - Text: \(comment.text)", component: "Comments")
+        LoggingService.debug("   - Author: \(comment.userId)", component: "Comments")
+        LoggingService.debug("   - Current Second Brain status: \(comment.isInSecondBrain)", component: "Comments")
         
         let commentRef = firestore
             .collection("videos")
@@ -154,30 +160,36 @@ class CommentsViewModel: ObservableObject {
             // Optimistically update UI
             if let index = comments.firstIndex(where: { $0.id == comment.id }) {
                 comments[index].isInSecondBrain.toggle()
+                LoggingService.debug("✅ Second Brain: Optimistically updated UI", component: "Comments")
             }
             
             let _ = try await firestore.runTransaction({ (transaction, errorPointer) -> Any? in
                 let commentDoc: DocumentSnapshot
                 do {
                     commentDoc = try transaction.getDocument(commentRef)
+                    LoggingService.debug("✅ Second Brain: Retrieved comment document", component: "Comments")
                 } catch let fetchError as NSError {
+                    LoggingService.error("❌ Second Brain: Failed to fetch comment document: \(fetchError.localizedDescription)", component: "Comments")
                     errorPointer?.pointee = fetchError
                     return nil
                 }
                 
                 var currentData = commentDoc.data() ?? [:]
-                currentData["isInSecondBrain"] = !(currentData["isInSecondBrain"] as? Bool ?? false)
+                let newSecondBrainStatus = !(currentData["isInSecondBrain"] as? Bool ?? false)
+                currentData["isInSecondBrain"] = newSecondBrainStatus
                 
                 transaction.setData(currentData, forDocument: commentRef)
-                print("✅ CommentsViewModel: Successfully toggled Second Brain status")
+                LoggingService.success("✅ Second Brain: Successfully toggled status to \(newSecondBrainStatus)", component: "Comments")
                 return nil
             })
+            
         } catch {
-            print("❌ CommentsViewModel: Error toggling Second Brain: \(error.localizedDescription)")
+            LoggingService.error("❌ Second Brain: Error toggling status: \(error.localizedDescription)", component: "Comments")
             
             // Revert optimistic update on error
             if let index = comments.firstIndex(where: { $0.id == comment.id }) {
                 comments[index].isInSecondBrain.toggle()
+                LoggingService.debug("↩️ Second Brain: Reverted UI update due to error", component: "Comments")
             }
             
             self.error = "Failed to update Second Brain status: \(error.localizedDescription)"

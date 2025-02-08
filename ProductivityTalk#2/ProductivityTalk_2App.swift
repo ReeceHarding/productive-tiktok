@@ -30,7 +30,7 @@ struct ProductivityTalk_2App: App {
     
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView()  // Changed from AuthenticationView to ContentView
         }
     }
 }

@@ -22,19 +22,33 @@ class VideoFeedViewModel: ObservableObject {
     private var preloadQueue = OperationQueue()
     private var preloadTasks: [String: Task<Void, Never>] = [:]
     
+    // NEW: Dictionary to hold snapshot listeners for each video document
+    private var videoListeners: [String: ListenerRegistration] = [:]
+    
     init() {
         preloadQueue.maxConcurrentOperationCount = 2
         LoggingService.video("Initialized with preload window of \(preloadWindow)", component: "Feed")
     }
     
+    deinit {
+        // Remove all snapshot listeners when the feed view model is deallocated
+        for (videoId, listener) in videoListeners {
+            LoggingService.debug("Removing video listener for video \(videoId)", component: "Feed")
+            listener.remove()
+        }
+    }
+    
     func fetchVideos() async {
         guard !isFetching else {
-            print("⚠️ VideoFeed: Already fetching videos")
+            LoggingService.error("Already fetching videos", component: "Feed")
             return
         }
         
         isFetching = true
-        print("🔍 VideoFeed: Fetching initial batch of videos")
+        isLoading = true
+        error = nil
+        
+        LoggingService.video("Fetching initial batch of videos", component: "Feed")
         
         do {
             let query = firestore.collection("videos")
@@ -42,22 +56,23 @@ class VideoFeedViewModel: ObservableObject {
                 .limit(to: batchSize)
             
             let snapshot = try await query.getDocuments()
+            var fetchedVideos: [Video] = []
             
-            let fetchedVideos = snapshot.documents.compactMap { document -> Video? in
-                print("📄 VideoFeed: Processing document with ID: \(document.documentID)")
-                return Video(document: document)
-            }
-            
-            print("✅ VideoFeed: Fetched \(fetchedVideos.count) videos")
-            self.videos = fetchedVideos
-            self.lastDocument = snapshot.documents.last
-            
-            // Create player view models for each video
-            for video in fetchedVideos {
-                if playerViewModels[video.id] == nil {
-                    playerViewModels[video.id] = VideoPlayerViewModel(video: video)
+            for document in snapshot.documents {
+                LoggingService.debug("Processing document with ID: \(document.documentID)", component: "Feed")
+                if let video = Video(document: document) {
+                    fetchedVideos.append(video)
+                    subscribeToUpdates(for: video)
+                    // Create player view model if not already created
+                    if playerViewModels[video.id] == nil {
+                        playerViewModels[video.id] = VideoPlayerViewModel(video: video)
+                    }
                 }
             }
+            
+            LoggingService.success("Fetched \(fetchedVideos.count) videos", component: "Feed")
+            self.videos = fetchedVideos
+            self.lastDocument = snapshot.documents.last
             
             // Preload the first two videos
             if !fetchedVideos.isEmpty {
@@ -68,11 +83,12 @@ class VideoFeedViewModel: ObservableObject {
             }
             
         } catch {
-            print("❌ VideoFeed: Error fetching videos: \(error)")
+            LoggingService.error("Error fetching videos: \(error)", component: "Feed")
             self.error = error
         }
         
         isFetching = false
+        isLoading = false
     }
     
     func fetchNextBatch() async {
@@ -91,17 +107,23 @@ class VideoFeedViewModel: ObservableObject {
             }
             
             let snapshot = try await query.getDocuments()
-            let newVideos = snapshot.documents.compactMap { Video(document: $0) }
+            var newVideos: [Video] = []
+            
+            for document in snapshot.documents {
+                if let video = Video(document: document) {
+                    newVideos.append(video)
+                    subscribeToUpdates(for: video)
+                    // Create player view model if necessary
+                    if playerViewModels[video.id] == nil {
+                        playerViewModels[video.id] = VideoPlayerViewModel(video: video)
+                    }
+                }
+            }
             
             if !newVideos.isEmpty {
-                videos.append(contentsOf: newVideos)
-                lastDocument = snapshot.documents.last
                 LoggingService.success("Fetched \(newVideos.count) new videos", component: "Feed")
-                
-                // Preload videos within the window
-                for video in newVideos {
-                    preloadVideo(for: video)
-                }
+                self.videos.append(contentsOf: newVideos)
+                self.lastDocument = snapshot.documents.last
             } else {
                 LoggingService.info("No more videos to fetch", component: "Feed")
             }
@@ -114,19 +136,64 @@ class VideoFeedViewModel: ObservableObject {
         isLoading = false
     }
     
-    private func preloadVideo(for video: Video) {
-        // Skip preloading if the video is not ready or videoURL is empty
-        if video.processingStatus != .ready || video.videoURL.isEmpty {
-            LoggingService.debug("Skipping preload for video \(video.id) because processingStatus is \(video.processingStatus.rawValue) or videoURL is empty", component: "Feed")
+    /// Subscribe to real-time updates for a given video document.
+    /// This will update the video in our videos array when changes occur.
+    private func subscribeToUpdates(for video: Video) {
+        // Avoid duplicate listener for the same video
+        if videoListeners[video.id] != nil {
+            LoggingService.debug("Listener already exists for video \(video.id)", component: "Feed")
             return
         }
+        
+        let docRef = firestore.collection("videos").document(video.id)
+        let listener = docRef.addSnapshotListener { [weak self] snapshot, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                LoggingService.error("Error listening to video \(video.id) updates: \(error.localizedDescription)", component: "Feed")
+                return
+            }
+            
+            guard let snapshot = snapshot, snapshot.exists,
+                  let updatedVideo = Video(document: snapshot) else {
+                LoggingService.error("No valid snapshot for video \(video.id)", component: "Feed")
+                return
+            }
+            
+            // Update the video in the local array if it has changed
+            if let index = self.videos.firstIndex(where: { $0.id == updatedVideo.id }) {
+                // Only update if there is a change in critical fields
+                if self.videos[index].processingStatus != updatedVideo.processingStatus ||
+                    self.videos[index].videoURL != updatedVideo.videoURL {
+                    LoggingService.video("Updating video \(updatedVideo.id) in feed (status: \(updatedVideo.processingStatus.rawValue))", component: "Feed")
+                    Task { @MainActor in
+                        self.videos[index] = updatedVideo
+                        // Update player view model if it exists
+                        if let playerViewModel = self.playerViewModels[updatedVideo.id] {
+                            playerViewModel.video = updatedVideo
+                        }
+                    }
+                }
+            }
+        }
+        
+        videoListeners[video.id] = listener
+        LoggingService.debug("Subscribed to updates for video \(video.id)", component: "Feed")
+    }
+    
+    private func preloadVideo(for video: Video) {
+        // Modified: Only check if videoURL is non-empty.
+        if video.videoURL.isEmpty {
+            LoggingService.debug("Skipping preload for video \(video.id) because videoURL is empty", component: "Feed")
+            return
+        }
+        
+        LoggingService.debug("Preloading video: \(video.id)", component: "Feed")
         
         guard let url = URL(string: video.videoURL) else {
             LoggingService.error("Invalid video URL for video: \(video.id)", component: "Feed")
             return
         }
-        
-        LoggingService.debug("Preloading video: \(video.id)", component: "Feed")
         
         let preloadTask = Task<Void, Never> {
             let asset = AVURLAsset(url: url, options: [
@@ -172,9 +239,9 @@ class VideoFeedViewModel: ObservableObject {
         
         let video = videos[index]
         
-        // Skip preloading if video is not ready
-        if video.processingStatus != .ready || video.videoURL.isEmpty {
-            LoggingService.debug("Skipping preload for video \(video.id) at index \(index) because it is not ready", component: "Feed")
+        // Modified: Only check if videoURL is empty.
+        if video.videoURL.isEmpty {
+            LoggingService.debug("Skipping preload for video \(video.id) at index \(index) because videoURL is empty", component: "Feed")
             return
         }
         

@@ -19,7 +19,7 @@ struct CommentsView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    // Dismiss sheet
+                    // Dismiss or close logic goes here
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.gray)
@@ -27,6 +27,13 @@ struct CommentsView: View {
                 }
             }
             .padding()
+            
+            // Informational text on using the brain icon
+            Text("Click the brain icon next to a comment to add the comment to your second brain.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .padding(.horizontal)
+                .padding(.bottom, 8)
             
             Divider()
             
@@ -89,8 +96,8 @@ struct CommentCell: View {
         VStack(alignment: .leading, spacing: 8) {
             // User Info
             HStack {
-                if let imageURL = comment.userProfileImageURL {
-                    AsyncImage(url: URL(string: imageURL)) { image in
+                if let imageURL = comment.userProfileImageURL, let url = URL(string: imageURL) {
+                    AsyncImage(url: url) { image in
                         image
                             .resizable()
                             .scaledToFill()

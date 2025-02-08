@@ -91,22 +91,25 @@ class InsightsViewModel: ObservableObject {
             // Collect all quotes
             var allQuotes: [(quote: String, videoId: String)] = []
             for doc in snapshot.documents {
-                print("\n🔄 Processing document: \(doc.documentID)")
+                LoggingService.debug("🔄 Processing document: \(doc.documentID)", component: "Insights")
                 let data = doc.data()
-                print("📄 Document data: \(data)")
+                LoggingService.debug("📄 Document data: \(data)", component: "Insights")
                 
-                if let quotes = data["quotes"] as? [String] {
-                    print("📝 Found quotes array with \(quotes.count) quotes")
-                    if let videoId = data["videoId"] as? String {
-                        quotes.forEach { quote in
-                            print("➕ Adding quote: \(quote)")
-                            allQuotes.append((quote: quote, videoId: videoId))
-                        }
-                    } else {
-                        print("⚠️ Missing videoId for document \(doc.documentID)")
-                    }
+                // Try to get quotes from either field
+                var quotes: [String]? = data["quotes"] as? [String]
+                if let quotes = quotes, !quotes.isEmpty {
+                    LoggingService.debug("📝 Found quotes in 'quotes' field for document \(doc.documentID): \(quotes)", component: "Insights")
+                } else if let extractedQuotes = data["extractedQuotes"] as? [String], !extractedQuotes.isEmpty {
+                    LoggingService.debug("📝 Found quotes in 'extractedQuotes' field for document \(doc.documentID): \(extractedQuotes)", component: "Insights")
+                    quotes = extractedQuotes
                 } else {
-                    print("⚠️ No quotes array found in document \(doc.documentID)")
+                    LoggingService.warning("⚠️ No quotes found in document \(doc.documentID)", component: "Insights")
+                }
+                
+                if let validQuotes = quotes, !validQuotes.isEmpty, let videoId = data["videoId"] as? String {
+                    for quote in validQuotes {
+                        allQuotes.append((quote: quote, videoId: videoId))
+                    }
                 }
             }
             
@@ -139,38 +142,38 @@ class InsightsViewModel: ObservableObject {
     }
     
     func saveInsight(_ quote: String, from videoId: String) async {
-        print("\n💾 InsightsViewModel: Starting to save insight")
+        LoggingService.debug("🎬 Second Brain: Starting to save insight", component: "Insights")
         guard let userId = AuthenticationManager.shared.currentUser?.uid else {
-            print("❌ InsightsViewModel: No user ID found - Authentication required")
+            LoggingService.error("❌ Second Brain: No authenticated user", component: "Insights")
             self.error = "Please sign in to save insights"
             return
         }
         
-        print("👤 InsightsViewModel: User authenticated - ID: \(userId)")
-        print("🎥 InsightsViewModel: Saving insight from video: \(videoId)")
+        LoggingService.debug("👤 Second Brain: User authenticated - ID: \(userId)", component: "Insights")
+        LoggingService.debug("🎥 Second Brain: Saving insight from video: \(videoId)", component: "Insights")
         
         do {
             // Get video details
-            print("🔍 InsightsViewModel: Fetching video details")
+            LoggingService.debug("🔍 Second Brain: Fetching video details", component: "Insights")
             let videoDoc = try await db.collection("videos").document(videoId).getDocument()
             guard let videoData = videoDoc.data() else {
-                print("❌ InsightsViewModel: No video data found for ID: \(videoId)")
+                LoggingService.error("❌ Second Brain: No video data found for ID: \(videoId)", component: "Insights")
                 self.error = "Video not found"
                 return
             }
             
-            print("📄 InsightsViewModel: Video data retrieved")
+            LoggingService.debug("📄 Second Brain: Video data retrieved", component: "Insights")
             let videoTitle = videoData["title"] as? String
             let tags = videoData["tags"] as? [String] ?? []
             let transcript = videoData["transcript"] as? String
             
             if transcript == nil {
-                print("⚠️ InsightsViewModel: No transcript found for video")
+                LoggingService.warning("⚠️ Second Brain: No transcript found for video", component: "Insights")
             }
             
             // Create second brain entry with all required fields
             let entryId = UUID().uuidString
-            print("🆕 InsightsViewModel: Creating new SecondBrain entry with ID: \(entryId)")
+            LoggingService.debug("🆕 Second Brain: Creating new entry with ID: \(entryId)", component: "Insights")
             
             let data: [String: Any] = [
                 "userId": userId,
@@ -179,17 +182,17 @@ class InsightsViewModel: ObservableObject {
                 "savedAt": Timestamp(date: Date()),
                 "videoTitle": videoTitle ?? "",
                 "category": tags.first ?? "Uncategorized",
-                "transcript": transcript ?? "",  // Ensure transcript is never nil
+                "transcript": transcript ?? "",
                 "videoThumbnailURL": videoData["thumbnailURL"] as? String ?? ""
             ]
             
-            print("📝 InsightsViewModel: Prepared document data:")
-            print("   - User ID: \(userId)")
-            print("   - Video ID: \(videoId)")
-            print("   - Quote Length: \(quote.count) characters")
-            print("   - Video Title: \(videoTitle ?? "Not Set")")
-            print("   - Category: \(tags.first ?? "Uncategorized")")
-            print("   - Has Transcript: \(transcript != nil)")
+            LoggingService.debug("📝 Second Brain: Prepared document data:", component: "Insights")
+            LoggingService.debug("   - User ID: \(userId)", component: "Insights")
+            LoggingService.debug("   - Video ID: \(videoId)", component: "Insights")
+            LoggingService.debug("   - Quote Length: \(quote.count) characters", component: "Insights")
+            LoggingService.debug("   - Video Title: \(videoTitle ?? "Not Set")", component: "Insights")
+            LoggingService.debug("   - Category: \(tags.first ?? "Uncategorized")", component: "Insights")
+            LoggingService.debug("   - Has Transcript: \(transcript != nil)", component: "Insights")
             
             // Save to Firestore
             try await db.collection("users")
@@ -198,20 +201,22 @@ class InsightsViewModel: ObservableObject {
                 .document(entryId)
                 .setData(data)
             
-            print("✅ InsightsViewModel: Successfully saved insight to Second Brain")
+            LoggingService.success("✅ Second Brain: Successfully saved insight", component: "Insights")
             
             // Update user's statistics
             try await updateUserStatistics(userId: userId)
+            LoggingService.debug("📊 Second Brain: Updated user statistics", component: "Insights")
             
             // Update Second Brain statistics
             await secondBrainViewModel.updateStatistics()
+            LoggingService.debug("📊 Second Brain: Updated global statistics", component: "Insights")
             
             // Reload insights
             await loadSavedInsights()
+            LoggingService.debug("🔄 Second Brain: Reloaded insights list", component: "Insights")
             
         } catch {
-            print("❌ InsightsViewModel: Error saving insight")
-            print("   - Error: \(error.localizedDescription)")
+            LoggingService.error("❌ Second Brain: Error saving insight: \(error.localizedDescription)", component: "Insights")
             self.error = "Failed to save insight: \(error.localizedDescription)"
         }
     }
@@ -278,58 +283,54 @@ class InsightsViewModel: ObservableObject {
                 .order(by: "savedAt", descending: true)
                 .getDocuments()
             
-            print("📊 InsightsViewModel: Query results:")
-            print("   - Total documents: \(snapshot.documents.count)")
+            print("\n📊 InsightsViewModel: Query results:")
+            print("   - Total documents found: \(snapshot.documents.count)")
             
-            var tags = Set<String>()
-            var processedCount = 0
-            var skippedCount = 0
+            var newInsights: [SavedInsight] = []
+            var totalQuotes = 0
+            var categoryCounts: [String: Int] = [:]
             
-            self.savedInsights = snapshot.documents.compactMap { doc in
-                print("\n🔄 Processing document: \(doc.documentID)")
+            for doc in snapshot.documents {
+                let data = doc.data()
                 
-                guard let quotes = doc.data()["quotes"] as? [String],
-                      !quotes.isEmpty,
-                      let videoId = doc.data()["videoId"] as? String,
-                      let savedAt = (doc.data()["savedAt"] as? Timestamp)?.dateValue() else {
-                    print("⚠️ InsightsViewModel: Document \(doc.documentID) missing required fields")
-                    print("   - Has quotes: \(doc.data()["quotes"] != nil)")
-                    print("   - Quotes count: \((doc.data()["quotes"] as? [String])?.count ?? 0)")
-                    print("   - Has videoId: \(doc.data()["videoId"] != nil)")
-                    print("   - Has savedAt: \(doc.data()["savedAt"] != nil)")
-                    skippedCount += 1
-                    return nil
+                // Try to get quotes from either field
+                var quotes: [String]? = data["quotes"] as? [String]
+                if let quotes = quotes, !quotes.isEmpty {
+                    LoggingService.debug("📝 Found quotes in 'quotes' field for document \(doc.documentID): \(quotes)", component: "Insights")
+                } else if let extractedQuotes = data["extractedQuotes"] as? [String], !extractedQuotes.isEmpty {
+                    LoggingService.debug("📝 Found quotes in 'extractedQuotes' field for document \(doc.documentID): \(extractedQuotes)", component: "Insights")
+                    quotes = extractedQuotes
+                } else {
+                    LoggingService.warning("⚠️ No quotes found in document \(doc.documentID)", component: "Insights")
                 }
                 
-                let category = doc.data()["category"] as? String ?? "Uncategorized"
-                tags.insert(category)
+                guard let validQuotes = quotes, !validQuotes.isEmpty,
+                      let videoId = data["videoId"] as? String else {
+                    LoggingService.warning("⚠️ Missing required fields in saved insight document \(doc.documentID)", component: "Insights")
+                    continue
+                }
                 
-                processedCount += 1
-                print("✅ Document processed successfully:")
-                print("   - Video ID: \(videoId)")
-                print("   - Category: \(category)")
-                print("   - Quotes count: \(quotes.count)")
-                print("   - First quote: \(quotes[0])")
-                print("   - Saved at: \(savedAt)")
+                let savedAtTimestamp = data["savedAt"] as? Timestamp
+                let savedAt = savedAtTimestamp?.dateValue() ?? Date()
+                let category = data["category"] as? String ?? "Uncategorized"
+                let videoTitle = data["videoTitle"] as? String
                 
-                return SavedInsight(
-                    id: doc.documentID,
-                    quotes: quotes,
-                    videoId: videoId,
-                    savedAt: savedAt,
-                    category: category,
-                    videoTitle: doc.data()["videoTitle"] as? String
-                )
+                newInsights.append(SavedInsight(id: doc.documentID, quotes: validQuotes, videoId: videoId, savedAt: savedAt, category: category, videoTitle: videoTitle))
+                totalQuotes += validQuotes.count
+                categoryCounts[category, default: 0] += 1
             }
             
-            self.availableTags = tags
+            self.savedInsights = newInsights
+            self.availableTags = Set(categoryCounts.keys)
             
-            print("\n📊 InsightsViewModel: Processing Summary")
+            print("\n📊 Processing Summary:")
             print("   - Total documents: \(snapshot.documents.count)")
-            print("   - Successfully processed: \(processedCount)")
-            print("   - Skipped/Invalid: \(skippedCount)")
-            print("   - Unique categories: \(tags.count)")
-            print("   Categories: \(tags.joined(separator: ", "))")
+            print("   - Total quotes across all documents: \(totalQuotes)")
+            print("   - Average quotes per document: \(totalQuotes > 0 ? Double(totalQuotes) / Double(snapshot.documents.count) : 0)")
+            print("\n📑 Category Distribution:")
+            for (category, count) in categoryCounts.sorted(by: { $0.value > $1.value }) {
+                print("   - \(category): \(count) documents (\(String(format: "%.1f%%", Double(count) / Double(totalQuotes) * 100))")
+            }
             
         } catch {
             print("\n❌ InsightsViewModel: Error loading insights")

@@ -19,28 +19,17 @@ struct VideoFeedView: View {
     private let transitionAnimation = Animation.easeInOut(duration: 0.3)
     
     var body: some View {
-        GeometryReader { geometry in
-            TabView(selection: $currentIndex) {
-                ForEach(Array(viewModel.videos.enumerated()), id: \.element.id) { index, video in
-                    VideoPlayerView(video: video)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .tag(index)
-                }
-            }
-            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
-            .ignoresSafeArea()
-            .onChange(of: currentIndex) { oldValue, newValue in
-                LoggingService.video("Switched to video at index \(newValue)", component: "Feed")
-                performHapticFeedback(.light)
-                viewModel.preloadAdjacentVideos(currentIndex: newValue)
-                
-                // Fetch more videos when nearing the end
-                if newValue >= viewModel.videos.count - 2 {
-                    Task {
-                        LoggingService.video("Fetching next batch of videos", component: "Feed")
-                        await viewModel.fetchNextBatch()
-                    }
-                }
+        ZStack {
+            if viewModel.isLoading {
+                loadingView
+            } else if let error = viewModel.error {
+                errorView(error)
+            } else if viewModel.videos.isEmpty {
+                emptyStateView
+            } else {
+                videoContentLayer
+                overlayLayer
+                fixedUILayer
             }
         }
         .task {
@@ -57,6 +46,80 @@ struct VideoFeedView: View {
         }
         .onAppear {
             prepareHaptics()
+        }
+    }
+    
+    // MARK: - Loading View
+    
+    private var loadingView: some View {
+        VStack(spacing: 20) {
+            ProgressView()
+                .scaleEffect(1.5)
+            Text("Loading videos...")
+                .font(.headline)
+                .foregroundColor(.secondary)
+        }
+    }
+    
+    // MARK: - Empty State View
+    
+    private var emptyStateView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "video.slash")
+                .font(.system(size: 50))
+                .foregroundColor(.primary)
+            Text("No Videos Available")
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(.primary)
+            Text("Check back later for new content")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            Button(action: {
+                Task {
+                    await viewModel.fetchVideos()
+                }
+            }) {
+                Text("Refresh")
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
+    }
+    
+    // MARK: - Error View
+    
+    private func errorView(_ error: Error) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 50))
+                .foregroundColor(.red)
+            Text("Error Loading Videos")
+                .font(.headline)
+            Text(error.localizedDescription)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            Button(action: {
+                Task {
+                    await viewModel.fetchVideos()
+                }
+            }) {
+                Text("Try Again")
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+            }
         }
     }
     

@@ -30,31 +30,41 @@ class VideoUploadViewModel: ObservableObject {
     }
     
     func loadVideos() async {
-        LoggingService.video("Starting to load selected videos", component: "Upload")
+        LoggingService.video("🎥 Starting to load selected videos (count: \(selectedItems.count))", component: "Upload")
         
         for item in selectedItems {
             let id = UUID().uuidString
+            var tempURL: URL?
+            
+            LoggingService.debug("Processing video item with generated ID: \(id)", component: "Upload")
             
             do {
                 // Load video data
                 guard let videoData = try await item.loadTransferable(type: Data.self) else {
-                    LoggingService.error("Failed to load video data", component: "Upload")
+                    LoggingService.error("❌ Failed to load video data for item \(id)", component: "Upload")
                     throw NSError(domain: "VideoUpload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load video data"])
                 }
-                LoggingService.success("Successfully loaded video data for \(id): \(ByteCountFormatter.string(fromByteCount: Int64(videoData.count), countStyle: .file))", component: "Upload")
+                LoggingService.success("📦 Successfully loaded video data: \(ByteCountFormatter.string(fromByteCount: Int64(videoData.count), countStyle: .file))", component: "Upload")
                 
                 // Create temporary file
-                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(id).mov")
+                tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(id).mov")
+                guard let tempURL = tempURL else {
+                    throw NSError(domain: "VideoUpload", code: -3, userInfo: [NSLocalizedDescriptionKey: "Failed to create temporary URL"])
+                }
+                
                 try videoData.write(to: tempURL)
-                LoggingService.debug("Saved video to temporary file: \(tempURL.path)", component: "Upload")
+                LoggingService.debug("💾 Saved video to temporary file: \(tempURL.path)", component: "Upload")
                 
                 // Create initial Firestore document
                 guard let userId = AuthenticationManager.shared.currentUser?.uid,
                       let username = AuthenticationManager.shared.appUser?.username else {
+                    LoggingService.error("❌ User not authenticated (userId: \(String(describing: AuthenticationManager.shared.currentUser?.uid)), username: \(String(describing: AuthenticationManager.shared.appUser?.username)))", component: "Upload")
                     throw NSError(domain: "VideoUpload", 
                                 code: -2, 
                                 userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
                 }
+                
+                LoggingService.debug("👤 User info - ID: \(userId), Username: \(username)", component: "Upload")
                 
                 let video = Video(
                     id: id,
@@ -69,6 +79,7 @@ class VideoUploadViewModel: ObservableObject {
                 
                 // Start a batch write
                 let batch = firestore.batch()
+                LoggingService.debug("📝 Starting Firestore batch write for video \(id)", component: "Upload")
                 
                 // Create the video document
                 let videoRef = firestore.collection("videos").document(id)
@@ -86,44 +97,61 @@ class VideoUploadViewModel: ObservableObject {
                 
                 // Commit the batch
                 try await batch.commit()
-                LoggingService.success("Created initial video documents", component: "Upload")
+                LoggingService.success("✅ Created initial video documents in Firestore", component: "Upload")
                 
                 // Process and upload video
-                LoggingService.video("Starting video processing", component: "Upload")
-                let (_, _) = try await videoProcessor.processAndUploadVideo(sourceURL: tempURL)
-                LoggingService.success("Video processed and uploaded successfully", component: "Upload")
+                LoggingService.video("🔄 Starting video processing pipeline", component: "Upload")
+                let (videoURL, thumbnailURL) = try await videoProcessor.processAndUploadVideo(sourceURL: tempURL)
+                LoggingService.success("✅ Video processed successfully", component: "Upload")
+                LoggingService.debug("📍 Video URL: \(videoURL)", component: "Upload")
+                LoggingService.debug("📍 Thumbnail URL: \(thumbnailURL)", component: "Upload")
                 
                 // Update UI state
                 await MainActor.run {
                     self.uploadStates[id] = UploadState(progress: 1.0, isComplete: true, thumbnailImage: nil)
+                    LoggingService.debug("📊 Updated UI state - Progress: 100%, Complete: true", component: "Upload")
                 }
                 
-                // Clean up temp file
-                try? FileManager.default.removeItem(at: tempURL)
-                LoggingService.debug("Cleaned up temporary file", component: "Upload")
-                
             } catch {
-                LoggingService.error("Failed to process video: \(error.localizedDescription)", component: "Upload")
+                LoggingService.error("❌ Failed to process video: \(error.localizedDescription)", component: "Upload")
+                LoggingService.error("Detailed error: \(error)", component: "Upload")
                 
                 // Update UI state
                 await MainActor.run {
                     self.uploadStates[id] = UploadState(progress: 0, isComplete: false, thumbnailImage: nil)
                     self.showError = true
                     self.errorMessage = "Failed to process video: \(error.localizedDescription)"
+                    LoggingService.debug("📊 Updated UI state - Progress: 0%, Complete: false, Error shown", component: "Upload")
                 }
                 
                 // Clean up Firestore document if it exists
-                try? await firestore.collection("videos").document(id).delete()
-                try? await firestore.collection("users")
-                    .document(AuthenticationManager.shared.currentUser?.uid ?? "")
-                    .collection("videos")
-                    .document(id)
-                    .delete()
+                do {
+                    try await firestore.collection("videos").document(id).delete()
+                    try await firestore.collection("users")
+                        .document(AuthenticationManager.shared.currentUser?.uid ?? "")
+                        .collection("videos")
+                        .document(id)
+                        .delete()
+                    LoggingService.debug("🧹 Cleaned up Firestore documents after error", component: "Upload")
+                } catch let cleanupError {
+                    LoggingService.error("Failed to clean up Firestore documents: \(cleanupError)", component: "Upload")
+                }
+            }
+            
+            // Clean up temp file only after everything is done
+            if let tempURL = tempURL {
+                do {
+                    try FileManager.default.removeItem(at: tempURL)
+                    LoggingService.debug("🧹 Cleaned up temporary file: \(tempURL.path)", component: "Upload")
+                } catch {
+                    LoggingService.error("Failed to clean up temporary file: \(error)", component: "Upload")
+                }
             }
         }
         
         // Clear selection after processing
         selectedItems.removeAll()
+        LoggingService.debug("🧹 Cleared selected items after processing", component: "Upload")
     }
     
     private func uploadVideos() async {

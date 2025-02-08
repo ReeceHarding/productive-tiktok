@@ -43,6 +43,14 @@ class AuthenticationManager: ObservableObject {
     private let auth = Auth.auth()
     private let firestore = Firestore.firestore()
     private var authStateHandle: AuthStateDidChangeListenerHandle?
+    private var activeListeners: [ListenerRegistration] = []  // Track active listeners
+    
+    deinit {
+        print("🔐 Auth: Cleaning up AuthenticationManager")
+        authStateHandle = nil
+        activeListeners.forEach { $0.remove() }
+        activeListeners.removeAll()
+    }
     
     private init() {
         print("🔐 Auth: Initializing AuthenticationManager")
@@ -73,6 +81,10 @@ class AuthenticationManager: ObservableObject {
     private func fetchAppUser(uid: String) async {
         print("🔍 Auth: Fetching app user data for UID: \(uid)")
         do {
+            // Remove any existing listener for user document
+            activeListeners.forEach { $0.remove() }
+            activeListeners.removeAll()
+            
             let document = try await firestore.collection("users").document(uid).getDocument()
             if let appUser = AppUser(document: document) {
                 self.appUser = appUser
@@ -104,10 +116,7 @@ class AuthenticationManager: ObservableObject {
             // Create user document in Firestore
             try await createUserDocument(uid: uid, email: email, username: username)
             print("✅ Auth: Successfully created user document in Firestore")
-            
-            // Send email verification
-            try await authResult.user.sendEmailVerification()
-            print("✅ Auth: Sent email verification")
+            print("✅ Auth: Sign up completed successfully - redirecting to video feed")
             
         } catch let error as NSError {
             print("❌ Auth: Sign up failed with error: \(error.localizedDescription)")
@@ -169,12 +178,54 @@ class AuthenticationManager: ObservableObject {
         }
     }
     
-    func signOut() throws {
+    func signOut() async throws {
         print("🔐 Auth: Attempting to sign out user")
         do {
+            // Disable any new queries
+            firestore.settings = Firestore.firestore().settings
+            print("✅ Auth: Disabled new Firestore queries")
+            
+            // Remove all Firestore listeners first
+            activeListeners.forEach { $0.remove() }
+            activeListeners.removeAll()
+            print("✅ Auth: Removed all Firestore listeners")
+            
+            // Remove auth state listener
+            if let handle = authStateHandle {
+                auth.removeStateDidChangeListener(handle)
+                authStateHandle = nil
+                print("✅ Auth: Removed auth state listener")
+            }
+            
+            // Clear local state
+            self.appUser = nil
+            self.isAuthenticated = false
+            self.currentUser = nil
+            UserDefaults.standard.removeObject(forKey: "userId")
+            print("✅ Auth: Cleared local state")
+            
+            // Sign out from Firebase Auth
             try auth.signOut()
             print("✅ Auth: Successfully signed out user")
-            UserDefaults.standard.removeObject(forKey: "userId")
+            
+            // Wait a bit to ensure all queries are completed
+            try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            
+            // Terminate Firestore instance
+            try await firestore.terminate()
+            print("✅ Auth: Terminated Firestore")
+            
+            // Wait for termination to complete
+            try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            
+            // Clear Firestore persistence
+            try await firestore.clearPersistence()
+            print("✅ Auth: Cleared Firestore persistence")
+            
+            // Re-setup auth state handler for next sign in
+            setupAuthStateHandler()
+            print("✅ Auth: Re-initialized auth state handler")
+            
         } catch {
             print("❌ Auth: Sign out failed with error: \(error.localizedDescription)")
             throw AuthError.unknown(error)

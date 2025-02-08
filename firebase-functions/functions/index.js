@@ -36,32 +36,48 @@ exports.processVideo = onObjectFinalized({
 }, async (event) => {
   const filePath = event.data.name;
   const fileName = path.basename(filePath);
-
+  
   // Only process videos in the videos/ folder
   if (!filePath.startsWith("videos/")) {
     console.log("Not a video upload, skipping processing");
     return;
   }
-
+  
   // Extract the video ID from the filename (remove .mp4 extension)
   const videoId = path.basename(fileName, ".mp4");
   console.log(`Processing video with ID: ${videoId}`);
-
+  
   const bucket = storage.bucket(event.data.bucket);
-
+  
   try {
-    // Update status to processing
+    // Keep status as "uploading" while we process
+    // This matches our Swift enum: case uploading = "uploading"
+    console.log(`Starting processing for video ${videoId} (status: uploading)`);
+    
+    // Generate a signed URL for the video with a long expiration
+    const signedUrlConfig = {
+      action: 'read',
+      expires: '03-01-2500', // Very long expiration
+      version: 'v4'
+    };
+    
+    console.log(`Generating signed URL for video: ${filePath}`);
+    const [signedUrl] = await bucket.file(filePath).getSignedUrl(signedUrlConfig);
+    console.log(`✅ Generated signed URL: ${signedUrl}`);
+    
+    // Update video document with signed URL but keep status as uploading
     await admin.firestore().collection("videos").doc(videoId).update({
-      processingStatus: "processing",
+      videoURL: signedUrl,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
-    console.log(`Updated video ${videoId} status to processing`);
+    console.log(`✅ Updated video document with signed URL (status: uploading)`);
 
     // Download video to temp for audio extraction
     const tempFilePath = path.join(os.tmpdir(), fileName);
     await bucket.file(filePath).download({destination: tempFilePath});
     console.log("Downloaded video to:", tempFilePath);
-
-    // Extract audio for transcription (no video processing needed)
+    
+    // Extract audio for transcription
     const audioPath = path.join(os.tmpdir(), `${videoId}.mp3`);
     await new Promise((resolve, reject) => {
       ffmpeg(tempFilePath)
@@ -77,19 +93,13 @@ exports.processVideo = onObjectFinalized({
         .save(audioPath);
     });
     console.log("Extracted audio to:", audioPath);
-
-    // Update status to transcribing
-    await admin.firestore().collection("videos").doc(videoId).update({
-      processingStatus: "transcribing",
-    });
-    console.log(`Updated video ${videoId} status to transcribing`);
-
-    // Call OpenAI Whisper API
+    
+    // Call OpenAI Whisper API for transcription
     const formData = new FormData();
     formData.append("file", fs.createReadStream(audioPath));
     formData.append("model", "whisper-1");
     formData.append("response_format", "text");
-
+    
     const response = await axios.post(
       "https://api.openai.com/v1/audio/transcriptions",
       formData,
@@ -101,25 +111,23 @@ exports.processVideo = onObjectFinalized({
         maxBodyLength: Infinity,
       },
     );
-
+    
     const transcriptText = response.data;
-
-    // Update status to extracting quotes
+    console.log("✅ Transcription completed");
+    
+    // Update with transcript but keep status as uploading
     await admin.firestore().collection("videos").doc(videoId).update({
       transcript: transcriptText,
-      processingStatus: "extracting_quotes",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
-    console.log(`Updated video ${videoId} with transcript and status extracting_quotes`);
-
-    // Extract quotes using GPT-4
-    const chatPrompt = 
-      "Extract 2-3 insightful quotes from the following video transcript for a second brain. " +
-      "Format each quote on a new line starting with a dash (-). The quotes should be brief and meaningful.\n" +
-      `Transcript:\n"${transcriptText}"`;
+    console.log(`✅ Updated video ${videoId} with transcript (status: uploading)`);
     
     try {
-      console.log("🎯 Sending quote extraction request to GPT-4...");
-      console.log("📝 Transcript length:", transcriptText.length);
+      console.log("🎯 Extracting quotes using GPT-4...");
+      const chatPrompt = 
+        "Extract 2-3 insightful quotes from the following video transcript for a second brain. " +
+        "Format each quote on a new line starting with a dash (-). The quotes should be brief and meaningful.\n" +
+        `Transcript:\n"${transcriptText}"`;
       
       const chatRes = await axios.post(
         "https://api.openai.com/v1/chat/completions",
@@ -137,161 +145,160 @@ exports.processVideo = onObjectFinalized({
           maxBodyLength: Infinity,
         },
       );
-
+      
       console.log("✅ Received response from GPT-4");
       const quoteText = chatRes.data.choices[0].message.content;
-      console.log("📝 Raw quote text from GPT-4:", quoteText);
-      
-      // Parse quotes - look for lines starting with a dash
       const quotes = quoteText.split("\n")
         .map(line => line.trim())
         .filter(line => line.startsWith("-"))
         .map(line => line.substring(1).trim());
       
       console.log("📊 Extracted quotes:", quotes);
-      console.log(`Found ${quotes.length} quotes`);
-
-      if (quotes.length === 0) {
-        console.warn("⚠️ No quotes were extracted from GPT-4 response");
-        console.warn("GPT-4 raw response:", quoteText);
-        throw new Error("Failed to extract any quotes from the transcript");
-      }
-
-      // Generate auto title first since we need it for updates
-      console.log("Generating auto title...");
-      const titlePrompt = 
-        "Based on the following transcript, generate an engaging and catchy title " +
-        "(max 60 characters):\n\n" + transcriptText;
-      const titleRes = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          model: "gpt-4",
-          messages: [{role: "user", content: titlePrompt}],
-          max_tokens: 60,
-          temperature: 0.7,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      const autoTitle = titleRes.data.choices[0].message.content.trim();
-      console.log("Generated auto title:", autoTitle);
-
-      // Update video document with quotes and metadata
-      console.log("💾 Updating video document with quotes and metadata...");
-      const videoUpdateData = {
+      
+      // Update to ready status with transcript and quotes immediately
+      await admin.firestore().collection("videos").doc(videoId).update({
+        transcript: transcriptText,
         quotes: quotes,
+        processingStatus: "ready", // This matches our Swift enum: case ready = "ready"
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      console.log(`✅ Updated video ${videoId} to ready status with transcript and quotes`);
+      
+      // Generate additional metadata in the background
+      console.log("Generating additional metadata...");
+      const [titleRes, descriptionRes, tagsRes] = await Promise.all([
+        // Title generation
+        axios.post(
+          "https://api.openai.com/v1/chat/completions",
+          {
+            model: "gpt-4",
+            messages: [{role: "user", content: 
+              "Based on the following transcript, generate an engaging and catchy title " +
+              "(max 60 characters):\n\n" + transcriptText
+            }],
+            max_tokens: 60,
+            temperature: 0.7,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+          }
+        ),
+        // Description generation
+        axios.post(
+          "https://api.openai.com/v1/chat/completions",
+          {
+            model: "gpt-4",
+            messages: [{role: "user", content:
+              "Based on the following transcript, generate a concise and engaging video description " +
+              "(max 200 characters):\n\n" + transcriptText
+            }],
+            max_tokens: 200,
+            temperature: 0.7,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+          }
+        ),
+        // Tags generation
+        axios.post(
+          "https://api.openai.com/v1/chat/completions",
+          {
+            model: "gpt-4",
+            messages: [{role: "user", content:
+              "Based on the following transcript, generate 3-5 relevant tags " +
+              "(comma-separated):\n\n" + transcriptText
+            }],
+            max_tokens: 100,
+            temperature: 0.7,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+          }
+        )
+      ]);
+      
+      const autoTitle = titleRes.data.choices[0].message.content.trim();
+      const autoDescription = descriptionRes.data.choices[0].message.content.trim();
+      const autoTags = tagsRes.data.choices[0].message.content.trim()
+        .split(",").map(tag => tag.trim()).filter(tag => tag);
+      
+      console.log("✅ Generated metadata");
+      console.log("Title:", autoTitle);
+      console.log("Description:", autoDescription);
+      console.log("Tags:", autoTags);
+      
+      // Final update with all content and ready status
+      const finalUpdateData = {
         autoTitle: autoTitle,
-        title: autoTitle, // Set both title fields
-        processingStatus: "ready",
+        title: autoTitle,
+        autoDescription: autoDescription,
+        description: autoDescription,
+        autoTags: autoTags,
+        tags: autoTags,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       };
       
-      await admin.firestore().collection("videos").doc(videoId).update(videoUpdateData);
-      console.log(`✅ Successfully updated video ${videoId} with ${quotes.length} quotes`);
-
-      // Update any existing Second Brain entries for this video
+      await admin.firestore().collection("videos").doc(videoId).update(finalUpdateData);
+      console.log(`✅ Successfully updated video ${videoId} with additional metadata`);
+      
+      // Update Second Brain entries if they exist
       const secondBrainQuery = await admin.firestore()
         .collectionGroup("secondBrain")
         .where("videoId", "==", videoId)
         .get();
       
-      console.log(`Found ${secondBrainQuery.docs.length} Second Brain entries to update`);
+      if (!secondBrainQuery.empty) {
+        const batch = admin.firestore().batch();
+        secondBrainQuery.docs.forEach(doc => {
+          batch.update(doc.ref, {
+            quotes: quotes,
+            videoTitle: autoTitle,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+        });
+        await batch.commit();
+        console.log(`✅ Updated ${secondBrainQuery.docs.length} Second Brain entries`);
+      }
       
-      const batch = admin.firestore().batch();
-      secondBrainQuery.docs.forEach(doc => {
-        batch.update(doc.ref, {
-          quotes: quotes,
-          videoTitle: autoTitle,
+    } catch (contentErr) {
+      console.error("Content generation failed:", contentErr);
+      // If quotes generation fails, set error and include transcript
+      if (contentErr.message.includes("GPT-4") || contentErr.message.includes("chat/completions")) {
+        await admin.firestore().collection("videos").doc(videoId).update({
+          processingStatus: "error", // This matches our Swift enum: case error = "error"
+          processingError: "Failed to generate quotes: " + contentErr.message,
+          transcript: transcriptText, // Still save the transcript even if quotes fail
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
-      });
-      
-      if (!secondBrainQuery.empty) {
-        await batch.commit();
-        console.log("✅ Updated all Second Brain entries with quotes");
+        console.log(`Updated video ${videoId} status to error but saved transcript`);
+      } else {
+        // For other errors in metadata generation, continue with ready status
+        console.log(`Continuing with ready status for video ${videoId} despite metadata generation failure`);
       }
-
-      // Generate auto description
-      console.log("Generating auto description...");
-      const descriptionPrompt = 
-        "Based on the following transcript, generate a concise and engaging video description " +
-        "(max 200 characters):\n\n" + transcriptText;
-      const descriptionRes = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          model: "gpt-4",
-          messages: [{role: "user", content: descriptionPrompt}],
-          max_tokens: 200,
-          temperature: 0.7,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      const autoDescription = descriptionRes.data.choices[0].message.content.trim();
-      console.log("Generated auto description:", autoDescription);
-
-      // Generate auto tags
-      console.log("Generating auto tags...");
-      const tagsPrompt = 
-        "Based on the following transcript, generate 3-5 relevant tags " +
-        "(comma-separated):\n\n" + transcriptText;
-      const tagsRes = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          model: "gpt-4",
-          messages: [{role: "user", content: tagsPrompt}],
-          max_tokens: 100,
-          temperature: 0.7,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      const tagsText = tagsRes.data.choices[0].message.content.trim();
-      const autoTags = tagsText.split(",").map(tag => tag.trim()).filter(tag => tag);
-      console.log("Generated auto tags:", autoTags);
-
-      // Update video document with transcript, quotes, auto-generated content and status
-      await admin.firestore().collection("videos").doc(videoId).update({
-        quotes: quotes,
-        autoTitle: autoTitle,
-        autoDescription: autoDescription,
-        autoTags: autoTags,
-        processingStatus: "ready",
-      });
-      console.log(`Updated video ${videoId} with quotes, auto-generated content and status ready`);
-    } catch (quoteErr) {
-      console.error("Content generation failed:", quoteErr);
-      // Even if content generation fails, we still have the transcript
-      await admin.firestore().collection("videos").doc(videoId).update({
-        quotes: [],
-        processingStatus: "ready",
-      });
-      console.log(`Updated video ${videoId} status to ready (without generated content)`);
     }
-
+    
     // Clean up temp files
     fs.unlinkSync(tempFilePath);
     fs.unlinkSync(audioPath);
     console.log("Cleaned up temporary files");
+    
   } catch (error) {
     console.error("Error processing video:", error);
     // Update video status to error
     try {
       await admin.firestore().collection("videos").doc(videoId).update({
-        processingStatus: "error",
-        processingError: error.message || "Unknown error occurred"
+        processingStatus: "error", // This matches our Swift enum: case error = "error"
+        processingError: error.message || "Unknown error occurred",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
       console.log(`Updated video ${videoId} status to error`);
     } catch (updateError) {
