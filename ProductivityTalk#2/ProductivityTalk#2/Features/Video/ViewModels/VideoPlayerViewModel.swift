@@ -7,6 +7,9 @@ import AVFoundation
 
 @MainActor
 class VideoPlayerViewModel: NSObject, ObservableObject {
+    // Static property to track currently playing video
+    private static var currentlyPlayingViewModel: VideoPlayerViewModel?
+    
     @Published var video: Video
     @Published var isPlaying = false
     @Published var isMuted = false
@@ -104,26 +107,66 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
             }
     }
     
-    private func cleanup() {
-        LoggingService.video("Starting cleanup for video \(video.id)", component: "Player")
+    func cleanup() {
+        LoggingService.video("🎬 Starting cleanup for video \(video.id)", component: "Player")
+        LoggingService.debug("🔊 Audio State - isPlaying: \(isPlaying), isMuted: \(isMuted)", component: "Player")
+        
         // Remove observers first
         if let timeObserver = timeObserver {
             player?.removeTimeObserver(timeObserver)
             self.timeObserver = nil
+            LoggingService.debug("🎵 Removed time observer", component: "Player")
         }
         
         statusObserver?.invalidate()
         statusObserver = nil
+        LoggingService.debug("🎵 Removed status observer", component: "Player")
         
-        // Stop and remove player
-        player?.pause()
-        player?.replaceCurrentItem(with: nil)
+        // Remove notification observer
+        NotificationCenter.default.removeObserver(self)
+        LoggingService.debug("🎵 Removed notification observers", component: "Player")
+        
+        // Clear currently playing reference if this is the current player
+        if VideoPlayerViewModel.currentlyPlayingViewModel === self {
+            VideoPlayerViewModel.currentlyPlayingViewModel = nil
+        }
+        
+        // Fade out audio and stop player
+        if let player = player {
+            // Fade out audio first
+            let fadeTime = 0.3
+            let steps = 5
+            let volumeDecrement = player.volume / Float(steps)
+            
+            for i in 0...steps {
+                DispatchQueue.main.asyncAfter(deadline: .now() + fadeTime * Double(i) / Double(steps)) {
+                    player.volume = player.volume - volumeDecrement
+                }
+            }
+            
+            // After fade out, stop player
+            DispatchQueue.main.asyncAfter(deadline: .now() + fadeTime) {
+                player.pause()
+                player.replaceCurrentItem(with: nil)
+                LoggingService.debug("🔇 Player paused and item removed", component: "Player")
+            }
+        }
+        
         player = nil
+        isPlaying = false
         
-        // Deactivate audio session
-        try? AVAudioSession.sharedInstance().setActive(false)
+        // Deactivate audio session if no other playback is active
+        do {
+            let session = AVAudioSession.sharedInstance()
+            if !session.isOtherAudioPlaying {
+                try session.setActive(false, options: .notifyOthersOnDeactivation)
+                LoggingService.debug("🔇 Audio session deactivated", component: "Player")
+            }
+        } catch {
+            LoggingService.error("🔇 Failed to deactivate audio session: \(error.localizedDescription)", component: "Player")
+        }
         
-        LoggingService.debug("Cleaned up player resources for video \(video.id)", component: "Player")
+        LoggingService.debug("🎬 Completed cleanup for video \(video.id)", component: "Player")
     }
     
     func setupPlayer() {
@@ -139,12 +182,14 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
         // Clean up old player first
         cleanup()
         
-        // Simple audio session configuration for video playback
+        // Configure audio session only if not already active
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback)  // Simple playback category
-            try session.setActive(true)
-            LoggingService.debug("🔊 Audio enabled for video playback", component: "Player")
+            if !session.isOtherAudioPlaying {
+                try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+                try session.setActive(true, options: .notifyOthersOnDeactivation)
+                LoggingService.debug("🔊 Audio session activated for video playback", component: "Player")
+            }
         } catch {
             LoggingService.error("🔇 Audio configuration failed: \(error.localizedDescription)", component: "Player")
         }
@@ -153,8 +198,6 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
             LoggingService.error("❌ Invalid video URL for \(video.id): \(video.videoURL)", component: "Player")
             return
         }
-        
-        LoggingService.debug("📼 Creating player with URL: \(videoURL.absoluteString)", component: "Player")
         
         // Create new player with the video asset
         let asset = AVURLAsset(url: videoURL)
@@ -177,8 +220,9 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
                     let playerItem = AVPlayerItem(asset: asset)
                     let newPlayer = AVPlayer(playerItem: playerItem)
                     
-                    // Enable audio playback
-                    newPlayer.volume = isMuted ? 0 : 1
+                    // Start with audio muted but ready
+                    newPlayer.volume = 0
+                    newPlayer.isMuted = false  // Changed to false to allow volume control
                     
                     // Configure for looping
                     newPlayer.actionAtItemEnd = .none
@@ -195,10 +239,19 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
                             case .readyToPlay:
                                 LoggingService.success("✅ PlayerItem ready to play", component: "Player")
                                 if !self.isPlaying {
-                                    self.player?.play()
-                                    self.player?.rate = 1.0
-                                    self.isPlaying = true
-                                    LoggingService.debug("Started playback with audio", component: "Player")
+                                    // Only start playing if we're the current video
+                                    if VideoPlayerViewModel.currentlyPlayingViewModel === self {
+                                        self.player?.play()
+                                        self.player?.rate = 1.0
+                                        self.isPlaying = true
+                                        
+                                        // Always fade in audio when starting playback
+                                        if !self.isMuted {
+                                            self.fadeInAudio()
+                                            LoggingService.debug("🔊 Fading in audio", component: "Player")
+                                        }
+                                        LoggingService.debug("Started playback", component: "Player")
+                                    }
                                 }
                             case .failed:
                                 if let error = item.error {
@@ -220,12 +273,6 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
                         name: .AVPlayerItemDidPlayToEndTime,
                         object: playerItem
                     )
-                    
-                    // Start playback
-                    newPlayer.play()
-                    newPlayer.rate = 1.0
-                    self.isPlaying = true
-                    LoggingService.success("▶️ Started playback with audio enabled", component: "Player")
                 }
             } catch {
                 LoggingService.error("❌ Failed to load asset: \(error.localizedDescription)", component: "Player")
@@ -267,17 +314,33 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
     }
     
     @objc private func playerItemDidReachEnd() {
-        LoggingService.debug("Video reached end, looping playback", component: "Player")
+        LoggingService.debug("🔄 Video reached end, initiating loop", component: "Player")
+        LoggingService.debug("🔊 Audio State before loop - Volume: \(player?.volume ?? 0), Muted: \(isMuted)", component: "Player")
         player?.seek(to: .zero)
         player?.play()
         isPlaying = true
+        
+        // Reapply audio fade-in if not muted
+        if !isMuted {
+            fadeInAudio()
+            LoggingService.debug("🔊 Re-applying audio fade in on loop", component: "Player")
+        }
+        
+        LoggingService.debug("🔊 Playback restarted with audio state - Volume: \(player?.volume ?? 0), Muted: \(isMuted)", component: "Player")
     }
     
     func togglePlayback() {
         if isPlaying {
             player?.pause()
         } else {
+            // Stop any currently playing video before playing this one
+            if let currentlyPlaying = VideoPlayerViewModel.currentlyPlayingViewModel,
+               currentlyPlaying !== self {
+                currentlyPlaying.player?.pause()
+                currentlyPlaying.isPlaying = false
+            }
             player?.play()
+            VideoPlayerViewModel.currentlyPlayingViewModel = self
         }
         isPlaying.toggle()
     }
@@ -488,5 +551,29 @@ class VideoPlayerViewModel: NSObject, ObservableObject {
             isInSecondBrain = false
         }
         video.saveCount = saveCount
+    }
+    
+    private func fadeInAudio() {
+        guard let player = player else { return }
+        
+        // Start from current volume
+        let startVolume = player.volume
+        let targetVolume: Float = 1.0
+        let steps = 10
+        let fadeTime = 0.3 // Total fade duration in seconds
+        
+        LoggingService.debug("🔊 Starting audio fade in from \(startVolume) to \(targetVolume)", component: "Player")
+        
+        for i in 0...steps {
+            let delay = fadeTime * Double(i) / Double(steps)
+            let volume = startVolume + (targetVolume - startVolume) * Float(i) / Float(steps)
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                player.volume = volume
+                if i == steps {
+                    LoggingService.debug("🔊 Audio fade in completed", component: "Player")
+                }
+            }
+        }
     }
 } 
