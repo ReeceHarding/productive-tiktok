@@ -42,7 +42,6 @@ class VideoPlayerViewModel: ObservableObject {
         // Add periodic time observer
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC)), queue: .main) { [weak self] time in
             guard let _ = self else { return }
-            print("⏱️ VideoPlayer: Playback time: \(time.seconds) seconds")
         }
         
         // Observe player status
