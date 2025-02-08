@@ -2,16 +2,16 @@ import Foundation
 import FirebaseFirestore
 import AVFoundation
 
-enum VideoPlayerError: Error {
+public enum VideoPlayerError: Error {
     case assetNotPlayable
 }
 
 @MainActor
-class VideoFeedViewModel: ObservableObject {
-    @Published private(set) var videos: [Video] = []
-    @Published private(set) var isLoading = false
-    @Published var error: Error?
-    @Published var playerViewModels: [String: VideoPlayerViewModel] = [:]
+public class VideoFeedViewModel: ObservableObject {
+    @Published public private(set) var videos: [Video] = []
+    @Published public private(set) var isLoading = false
+    @Published public var error: Error?
+    @Published public var playerViewModels: [String: VideoPlayerViewModel] = [:]
     
     private let firestore = Firestore.firestore()
     private var lastDocument: DocumentSnapshot?
@@ -22,10 +22,10 @@ class VideoFeedViewModel: ObservableObject {
     private var preloadQueue = OperationQueue()
     private var preloadTasks: [String: Task<Void, Never>] = [:]
     
-    // NEW: Dictionary to hold snapshot listeners for each video document
+    // Dictionary to hold snapshot listeners for each video document
     private var videoListeners: [String: ListenerRegistration] = [:]
     
-    init() {
+    public init() {
         preloadQueue.maxConcurrentOperationCount = 2
         LoggingService.video("Initialized with preload window of \(preloadWindow)", component: "Feed")
     }
@@ -60,21 +60,26 @@ class VideoFeedViewModel: ObservableObject {
             
             for document in snapshot.documents {
                 LoggingService.debug("Processing document with ID: \(document.documentID)", component: "Feed")
-                if let video = Video(document: document) {
+                if let video = Video(document: document),
+                   video.processingStatus == .ready,
+                   !video.videoURL.isEmpty {
+                    LoggingService.debug("Adding ready video: \(video.id)", component: "Feed")
                     fetchedVideos.append(video)
                     subscribeToUpdates(for: video)
                     // Create player view model if not already created
                     if playerViewModels[video.id] == nil {
                         playerViewModels[video.id] = VideoPlayerViewModel(video: video)
                     }
+                } else {
+                    LoggingService.debug("Skipping video \(document.documentID) - Not ready or no URL", component: "Feed")
                 }
             }
             
-            LoggingService.success("Fetched \(fetchedVideos.count) videos", component: "Feed")
+            LoggingService.success("Fetched \(fetchedVideos.count) ready videos", component: "Feed")
             self.videos = fetchedVideos
             self.lastDocument = snapshot.documents.last
             
-            // Preload the first two videos
+            // Preload the first two videos if available
             if !fetchedVideos.isEmpty {
                 preloadVideo(at: 0)
                 if fetchedVideos.count > 1 {
@@ -110,22 +115,27 @@ class VideoFeedViewModel: ObservableObject {
             var newVideos: [Video] = []
             
             for document in snapshot.documents {
-                if let video = Video(document: document) {
+                if let video = Video(document: document),
+                   video.processingStatus == .ready,
+                   !video.videoURL.isEmpty {
+                    LoggingService.debug("Adding ready video: \(video.id)", component: "Feed")
                     newVideos.append(video)
                     subscribeToUpdates(for: video)
                     // Create player view model if necessary
                     if playerViewModels[video.id] == nil {
                         playerViewModels[video.id] = VideoPlayerViewModel(video: video)
                     }
+                } else {
+                    LoggingService.debug("Skipping video \(document.documentID) - Not ready or no URL", component: "Feed")
                 }
             }
             
             if !newVideos.isEmpty {
-                LoggingService.success("Fetched \(newVideos.count) new videos", component: "Feed")
+                LoggingService.success("Fetched \(newVideos.count) new ready videos", component: "Feed")
                 self.videos.append(contentsOf: newVideos)
                 self.lastDocument = snapshot.documents.last
             } else {
-                LoggingService.info("No more videos to fetch", component: "Feed")
+                LoggingService.info("No more ready videos to fetch", component: "Feed")
             }
         } catch {
             LoggingService.error("Failed to fetch videos: \(error.localizedDescription)", component: "Feed")
@@ -136,8 +146,6 @@ class VideoFeedViewModel: ObservableObject {
         isLoading = false
     }
     
-    /// Subscribe to real-time updates for a given video document.
-    /// This will update the video in our videos array when changes occur.
     private func subscribeToUpdates(for video: Video) {
         // Avoid duplicate listener for the same video
         if videoListeners[video.id] != nil {
@@ -181,56 +189,6 @@ class VideoFeedViewModel: ObservableObject {
         LoggingService.debug("Subscribed to updates for video \(video.id)", component: "Feed")
     }
     
-    private func preloadVideo(for video: Video) {
-        // Modified: Only check if videoURL is non-empty.
-        if video.videoURL.isEmpty {
-            LoggingService.debug("Skipping preload for video \(video.id) because videoURL is empty", component: "Feed")
-            return
-        }
-        
-        LoggingService.debug("Preloading video: \(video.id)", component: "Feed")
-        
-        guard let url = URL(string: video.videoURL) else {
-            LoggingService.error("Invalid video URL for video: \(video.id)", component: "Feed")
-            return
-        }
-        
-        let preloadTask = Task<Void, Never> {
-            let asset = AVURLAsset(url: url, options: [
-                AVURLAssetPreferPreciseDurationAndTimingKey: true,
-                "AVURLAssetOutOfBandMIMETypeKey": "video/mp4",
-                "AVAssetPreferredForwardBufferDurationKey": 2.0
-            ])
-            
-            asset.resourceLoader.setDelegate(VideoResourceLoaderDelegate.shared, queue: .global(qos: .userInitiated))
-            
-            let playerItem = AVPlayerItem(asset: asset)
-            playerItem.preferredForwardBufferDuration = 2.0
-            playerItem.preferredPeakBitRate = 3_000_000
-            
-            let player = AVPlayer(playerItem: playerItem)
-            player.automaticallyWaitsToMinimizeStalling = false
-            player.volume = 0
-            preloadedPlayers[video.id] = player
-            
-            do {
-                let isPlayable = try await asset.load(.isPlayable)
-                guard isPlayable else {
-                    throw VideoPlayerError.assetNotPlayable
-                }
-                player.play()
-                try? await Task.sleep(nanoseconds: UInt64(0.1 * 1_000_000_000))
-                player.pause()
-                LoggingService.success("Successfully preloaded video \(video.id)", component: "Feed")
-            } catch {
-                LoggingService.error("Failed to preload video \(video.id): \(error.localizedDescription)", component: "Feed")
-                preloadedPlayers.removeValue(forKey: video.id)
-            }
-        }
-        
-        preloadTasks[video.id] = preloadTask
-    }
-    
     func preloadVideo(at index: Int) {
         guard index >= 0 && index < videos.count else {
             LoggingService.error("Invalid index for preloading", component: "Feed")
@@ -239,7 +197,7 @@ class VideoFeedViewModel: ObservableObject {
         
         let video = videos[index]
         
-        // Modified: Only check if videoURL is empty.
+        // Only check if videoURL is empty
         if video.videoURL.isEmpty {
             LoggingService.debug("Skipping preload for video \(video.id) at index \(index) because videoURL is empty", component: "Feed")
             return
@@ -266,8 +224,6 @@ class VideoFeedViewModel: ObservableObject {
                 "AVAssetPreferredForwardBufferDurationKey": 2.0
             ])
             
-            asset.resourceLoader.setDelegate(VideoResourceLoaderDelegate.shared, queue: .global(qos: .userInitiated))
-            
             let playerItem = AVPlayerItem(asset: asset)
             playerItem.preferredForwardBufferDuration = 2.0
             playerItem.preferredPeakBitRate = 3_000_000
@@ -292,7 +248,6 @@ class VideoFeedViewModel: ObservableObject {
         }
         
         preloadTasks[video.id] = preloadTask
-        
         cleanupPreloadedVideos(currentIndex: index)
     }
     
@@ -307,7 +262,6 @@ class VideoFeedViewModel: ObservableObject {
         
         for videoId in videosToRemove {
             if let player = preloadedPlayers[videoId] {
-                // Ensure proper cleanup sequence
                 player.pause()
                 player.currentItem?.asset.cancelLoading()
                 player.replaceCurrentItem(with: nil)
@@ -317,62 +271,5 @@ class VideoFeedViewModel: ObservableObject {
             preloadTasks.removeValue(forKey: videoId)
             LoggingService.debug("Cleaned up preloaded video: \(videoId)", component: "Feed")
         }
-        
-        // Check memory pressure
-        if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
-            // Reduce preload window temporarily
-            let reducedWindow = max(1, preloadWindow - 1)
-            let extraVideosToRemove = Set(preloadedPlayers.keys).filter { videoId in
-                guard let index = videos.firstIndex(where: { $0.id == videoId }) else { return true }
-                return abs(index - currentIndex) > reducedWindow
-            }
-            
-            for videoId in extraVideosToRemove {
-                if let player = preloadedPlayers[videoId] {
-                    player.pause()
-                    player.currentItem?.asset.cancelLoading()
-                    player.replaceCurrentItem(with: nil)
-                }
-                preloadedPlayers.removeValue(forKey: videoId)
-                preloadTasks[videoId]?.cancel()
-                preloadTasks.removeValue(forKey: videoId)
-                LoggingService.debug("Cleaned up extra video due to memory pressure: \(videoId)", component: "Feed")
-            }
-        }
-    }
-    
-    func preloadAdjacentVideos(currentIndex: Int) {
-        print("🔄 VideoFeed: Preloading adjacent videos for index \(currentIndex)")
-        
-        // Preload next videos
-        for offset in 1...preloadWindow {
-            let nextIndex = currentIndex + offset
-            if nextIndex < videos.count {
-                preloadVideo(at: nextIndex)
-            }
-        }
-        
-        // Preload previous videos
-        for offset in 1...preloadWindow {
-            let prevIndex = currentIndex - offset
-            if prevIndex >= 0 {
-                preloadVideo(at: prevIndex)
-            }
-        }
-    }
-    
-    func getPreloadedPlayer(for videoId: String) -> AVPlayer? {
-        return preloadedPlayers[videoId]
-    }
-    
-    func cancelPreload(for videoId: String) {
-        preloadTasks[videoId]?.cancel()
-        if let player = preloadedPlayers[videoId] {
-            player.pause()
-            player.replaceCurrentItem(with: nil)
-        }
-        preloadTasks.removeValue(forKey: videoId)
-        preloadedPlayers.removeValue(forKey: videoId)
-        LoggingService.debug("Cancelled preload for video \(videoId)", component: "Feed")
     }
 } 

@@ -1,34 +1,34 @@
 import Foundation
 import FirebaseFirestore
 
-enum VideoProcessingStatus: String, Codable {
+public enum VideoProcessingStatus: String, Codable {
     case uploading = "uploading"
     case ready = "ready"
     case error = "error"
 }
 
-struct Video: Identifiable, Codable {
-    var id: String
-    let ownerId: String
-    var videoURL: String
-    let thumbnailURL: String?
-    let title: String
-    var tags: [String]
-    var description: String
-    let createdAt: Date
-    var likeCount: Int
-    var saveCount: Int
-    var commentCount: Int
-    var processingStatus: VideoProcessingStatus
-    var transcript: String?
-    var extractedQuotes: [String]?
-    var autoTitle: String?
-    var autoDescription: String?
-    var autoTags: [String]?
+public struct Video: Identifiable, Codable {
+    public var id: String
+    public let ownerId: String
+    public var videoURL: String
+    public let thumbnailURL: String?
+    public let title: String
+    public var tags: [String]
+    public var description: String
+    public let createdAt: Date
+    public var likeCount: Int
+    public var saveCount: Int
+    public var commentCount: Int
+    public var processingStatus: VideoProcessingStatus
+    public var transcript: String?
+    public var extractedQuotes: [String]?
+    public var autoTitle: String?
+    public var autoDescription: String?
+    public var autoTags: [String]?
     
     // Additional metadata for UI
-    var ownerUsername: String
-    var ownerProfilePicURL: String?
+    public var ownerUsername: String
+    public var ownerProfilePicURL: String?
     
     enum CodingKeys: String, CodingKey {
         case id

@@ -1,17 +1,17 @@
 import Foundation
 import FirebaseFirestore
 
-struct SecondBrain: Identifiable, Codable {
-    let id: String
-    let userId: String
-    let videoId: String
-    let transcript: String
-    var quotes: [String]
-    let savedAt: Date
+public struct SecondBrain: Identifiable, Codable {
+    public let id: String
+    public let userId: String
+    public let videoId: String
+    public let transcript: String
+    public var quotes: [String]
+    public let savedAt: Date
     
     // Additional metadata for UI
-    var videoTitle: String?
-    var videoThumbnailURL: String?
+    public var videoTitle: String?
+    public var videoThumbnailURL: String?
     
     enum CodingKeys: String, CodingKey {
         case id

@@ -13,6 +13,7 @@ public struct VideoPlayerView: View {
     @State private var brainAnimationPosition: CGPoint = .zero
     @State private var errorMessage: String?
     @State private var showError = false
+    @State private var isVisible = false
     
     public init(video: Video) {
         self.video = video
@@ -27,12 +28,22 @@ public struct VideoPlayerView: View {
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .edgesIgnoringSafeArea(.all)
                         .onAppear {
-                            LoggingService.video("Playing video with URL: \(video.videoURL)", component: "Player")
-                            player.play()
+                            LoggingService.video("Video view appeared for \(video.id)", component: "Player")
+                            isVisible = true
+                            if !viewModel.isLoading {
+                                player.play()
+                            }
                         }
                         .onDisappear {
-                            LoggingService.video("Pausing video with URL: \(video.videoURL)", component: "Player")
+                            LoggingService.video("Video view disappeared for \(video.id)", component: "Player")
+                            isVisible = false
                             player.pause()
+                        }
+                        .onChange(of: viewModel.isLoading) { _, isLoading in
+                            if !isLoading && isVisible {
+                                LoggingService.video("Auto-playing after load completed for \(video.id)", component: "Player")
+                                player.play()
+                            }
                         }
                 } else if viewModel.isLoading {
                     Color.black
@@ -81,7 +92,9 @@ public struct VideoPlayerView: View {
                 }
             }
             .task {
-                await viewModel.loadVideo()
+                if !viewModel.isLoading && viewModel.player == nil {
+                    await viewModel.loadVideo()
+                }
             }
             .onChange(of: video.videoURL) { _, newURL in
                 if !newURL.isEmpty {
@@ -93,7 +106,9 @@ public struct VideoPlayerView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 switch newPhase {
                 case .active:
-                    viewModel.player?.play()
+                    if isVisible && viewModel.player != nil {
+                        viewModel.player?.play()
+                    }
                 case .inactive, .background:
                     viewModel.player?.pause()
                 @unknown default:
