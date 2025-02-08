@@ -47,13 +47,20 @@ struct VideoPlayerView: View {
                             withAnimation(.easeOut(duration: 0.3)) {
                                 isAppearing = false
                             }
-                            viewModel.player?.pause()
-                            viewModel.isPlaying = false
+                            // Ensure cleanup when view disappears
+                            Task {
+                                await viewModel.cleanup()
+                            }
                         }
                         .onTapGesture {
                             withAnimation {
                                 isOverlayVisible.toggle()
                             }
+                            // Toggle playback
+                            viewModel.togglePlayback()
+                            // Add haptic feedback
+                            performHapticFeedback(viewModel.isPlaying ? .soft : .medium)
+                            LoggingService.debug("👆 Video tapped - Playback: \(viewModel.isPlaying ? "Playing" : "Paused"), Overlay: \(isOverlayVisible ? "Visible" : "Hidden")", component: "UI")
                         }
                 } else {
                     // Show loading state
@@ -70,13 +77,18 @@ struct VideoPlayerView: View {
                         .transition(.opacity)
                 }
             }
-            .onChange(of: scenePhase) { newPhase in
-                if newPhase == .active {
+            .onChange(of: scenePhase) { oldPhase, newPhase in
+                switch newPhase {
+                case .active:
                     if viewModel.isPlaying {
                         viewModel.player?.play()
                     }
-                } else {
-                    viewModel.player?.pause()
+                case .inactive, .background:
+                    Task {
+                        await viewModel.cleanup()
+                    }
+                @unknown default:
+                    break
                 }
             }
         }
@@ -264,25 +276,30 @@ struct CustomVideoPlayer: UIViewControllerRepresentable {
         player.actionAtItemEnd = .none
         player.preventsDisplaySleepDuringVideoPlayback = true
         
-        // Force playback to start
+        // Optimize view controller
+        controller.entersFullScreenWhenPlaybackBegins = false
+        controller.exitsFullScreenWhenPlaybackEnds = false
+        controller.updatesNowPlayingInfoCenter = false
+        
+        // Optimize view layer
+        if let playerLayer = controller.view.layer as? AVPlayerLayer {
+            playerLayer.videoGravity = .resizeAspectFill
+            playerLayer.needsDisplayOnBoundsChange = false
+            playerLayer.shouldRasterize = true
+            playerLayer.rasterizationScale = UIScreen.main.scale
+        }
+        
+        // Force playback to start with performance monitoring
         DispatchQueue.main.async {
             LoggingService.debug("🎬 Initiating playback in AVPlayerViewController", component: "UI")
+            
+            // Reset player state
             player.seek(to: .zero)
             player.play()
             player.rate = 1.0
             
-            // Verify playback started
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                LoggingService.debug("Playback verification:", component: "UI")
-                LoggingService.debug("- Player rate: \(player.rate)", component: "UI")
-                LoggingService.debug("- Player error: \(player.error?.localizedDescription ?? "none")", component: "UI")
-                if let currentItem = player.currentItem {
-                    LoggingService.debug("- Item status: \(currentItem.status.rawValue)", component: "UI")
-                    LoggingService.debug("- Buffer empty: \(currentItem.isPlaybackBufferEmpty)", component: "UI")
-                    LoggingService.debug("- Buffer full: \(currentItem.isPlaybackBufferFull)", component: "UI")
-                    LoggingService.debug("- Likely to keep up: \(currentItem.isPlaybackLikelyToKeepUp)", component: "UI")
-                }
-            }
+            // Monitor initial playback state
+            monitorPlaybackState(player: player)
         }
         
         return controller
@@ -291,6 +308,12 @@ struct CustomVideoPlayer: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
         if uiViewController.player !== player {
             LoggingService.debug("Updating player in AVPlayerViewController", component: "UI")
+            
+            // Cleanup old player
+            uiViewController.player?.pause()
+            uiViewController.player?.currentItem?.asset.cancelLoading()
+            
+            // Configure new player
             uiViewController.player = player
             
             // Ensure playback continues with new player
@@ -298,11 +321,44 @@ struct CustomVideoPlayer: UIViewControllerRepresentable {
                 player.play()
                 player.rate = 1.0
                 
-                // Verify playback after update
-                LoggingService.debug("Player update verification:", component: "UI")
-                LoggingService.debug("- New player rate: \(player.rate)", component: "UI")
-                if let currentItem = player.currentItem {
-                    LoggingService.debug("- New item status: \(currentItem.status.rawValue)", component: "UI")
+                // Monitor playback after update
+                monitorPlaybackState(player: player)
+            }
+        }
+    }
+    
+    private func monitorPlaybackState(player: AVPlayer) {
+        LoggingService.debug("Playback verification:", component: "UI")
+        LoggingService.debug("- Player rate: \(player.rate)", component: "UI")
+        LoggingService.debug("- Player error: \(player.error?.localizedDescription ?? "none")", component: "UI")
+        
+        if let currentItem = player.currentItem {
+            LoggingService.debug("- Item status: \(currentItem.status.rawValue)", component: "UI")
+            LoggingService.debug("- Buffer empty: \(currentItem.isPlaybackBufferEmpty)", component: "UI")
+            LoggingService.debug("- Buffer full: \(currentItem.isPlaybackBufferFull)", component: "UI")
+            LoggingService.debug("- Likely to keep up: \(currentItem.isPlaybackLikelyToKeepUp)", component: "UI")
+            
+            // Monitor loaded ranges
+            if let timeRange = currentItem.loadedTimeRanges.first?.timeRangeValue {
+                let bufferedDuration = timeRange.duration.seconds
+                let bufferedStart = timeRange.start.seconds
+                LoggingService.debug("- Buffered duration: \(bufferedDuration)s from \(bufferedStart)s", component: "UI")
+            }
+            
+            // Check for stalled state
+            if currentItem.isPlaybackBufferEmpty {
+                LoggingService.debug("⚠️ Playback buffer empty - may stall", component: "UI")
+            }
+            
+            // Monitor asset loading state
+            if let asset = currentItem.asset as? AVURLAsset {
+                Task {
+                    do {
+                        let isPlayable = try await asset.load(.isPlayable)
+                        LoggingService.debug("- Asset playable: \(isPlayable)", component: "UI")
+                    } catch {
+                        LoggingService.error("Failed to load asset properties: \(error.localizedDescription)", component: "UI")
+                    }
                 }
             }
         }

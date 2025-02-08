@@ -67,7 +67,7 @@ actor VideoProcessingService {
                     "thumbnailURL": "",  // No thumbnail needed
                     "processingStatus": VideoProcessingStatus.ready.rawValue,
                     "updatedAt": FieldValue.serverTimestamp()
-                ])
+                ] as [String: Any])
             
             LoggingService.success("Updated video document with URL and ready status", component: "Processing")
             
@@ -80,7 +80,7 @@ actor VideoProcessingService {
                 .updateData([
                     "processingStatus": VideoProcessingStatus.error.rawValue,
                     "processingError": error.localizedDescription
-                ])
+                ] as [String: Any])
             
             LoggingService.error("Processing failed: \(error.localizedDescription)", component: "Processing")
             throw error

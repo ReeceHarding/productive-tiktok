@@ -187,9 +187,10 @@ class VideoUploadViewModel: ObservableObject {
                 errorMessage = "Failed to upload video: \(error.localizedDescription)"
                 
                 // Update status to error
-                try? await firestore.collection("videos").document(id).updateData([
+                let updateData: [String: String] = [
                     "processingStatus": VideoProcessingStatus.error.rawValue
-                ])
+                ]
+                try? await firestore.collection("videos").document(id).updateData(updateData)
                 
                 // Clean up Firestore document if needed
                 try? await firestore.collection("videos").document(id).delete()

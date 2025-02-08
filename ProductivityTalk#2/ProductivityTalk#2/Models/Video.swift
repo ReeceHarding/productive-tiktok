@@ -129,7 +129,7 @@ struct Video: Identifiable, Codable {
         var data: [String: Any] = [
             "ownerId": ownerId,
             "videoURL": videoURL,
-            "thumbnailURL": thumbnailURL,
+            "thumbnailURL": thumbnailURL ?? "",
             "title": title,
             "tags": tags,
             "description": description,
