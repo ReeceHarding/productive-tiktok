@@ -135,20 +135,93 @@ exports.processVideo = onObjectFinalized({
       const quoteText = chatRes.data.choices[0].message.content;
       const quotes = quoteText.split("\n").filter((q) => q.trim());
 
-      // Update video document with transcript, quotes and status
+      // Generate auto title
+      console.log("Generating auto title...");
+      const titlePrompt = 
+        "Based on the following transcript, generate an engaging and catchy title " +
+        "(max 60 characters):\n\n" + transcriptText;
+      const titleRes = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          model: "gpt-4",
+          messages: [{role: "user", content: titlePrompt}],
+          max_tokens: 60,
+          temperature: 0.7,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      const autoTitle = titleRes.data.choices[0].message.content.trim();
+      console.log("Generated auto title:", autoTitle);
+
+      // Generate auto description
+      console.log("Generating auto description...");
+      const descriptionPrompt = 
+        "Based on the following transcript, generate a concise and engaging video description " +
+        "(max 200 characters):\n\n" + transcriptText;
+      const descriptionRes = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          model: "gpt-4",
+          messages: [{role: "user", content: descriptionPrompt}],
+          max_tokens: 200,
+          temperature: 0.7,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      const autoDescription = descriptionRes.data.choices[0].message.content.trim();
+      console.log("Generated auto description:", autoDescription);
+
+      // Generate auto tags
+      console.log("Generating auto tags...");
+      const tagsPrompt = 
+        "Based on the following transcript, generate 3-5 relevant tags " +
+        "(comma-separated):\n\n" + transcriptText;
+      const tagsRes = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          model: "gpt-4",
+          messages: [{role: "user", content: tagsPrompt}],
+          max_tokens: 100,
+          temperature: 0.7,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      const tagsText = tagsRes.data.choices[0].message.content.trim();
+      const autoTags = tagsText.split(",").map(tag => tag.trim()).filter(tag => tag);
+      console.log("Generated auto tags:", autoTags);
+
+      // Update video document with transcript, quotes, auto-generated content and status
       await admin.firestore().collection("videos").doc(videoId).update({
         quotes: quotes,
+        autoTitle: autoTitle,
+        autoDescription: autoDescription,
+        autoTags: autoTags,
         processingStatus: "ready",
       });
-      console.log(`Updated video ${videoId} with quotes and status ready`);
+      console.log(`Updated video ${videoId} with quotes, auto-generated content and status ready`);
     } catch (quoteErr) {
-      console.error("Quote extraction failed:", quoteErr);
-      // Even if quote extraction fails, we still have the transcript
+      console.error("Content generation failed:", quoteErr);
+      // Even if content generation fails, we still have the transcript
       await admin.firestore().collection("videos").doc(videoId).update({
         quotes: [],
         processingStatus: "ready",
       });
-      console.log(`Updated video ${videoId} status to ready (without quotes)`);
+      console.log(`Updated video ${videoId} status to ready (without generated content)`);
     }
 
     // Clean up temp files
