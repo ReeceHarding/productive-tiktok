@@ -350,26 +350,6 @@ struct FlowLayout: Layout {
     }
 }
 
-struct CommentsView: View {
-    let video: Video
-    @Environment(\.dismiss) private var dismiss
-    
-    var body: some View {
-        NavigationView {
-            Text("Comments Coming Soon")
-                .navigationTitle("Comments")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Close") {
-                            dismiss()
-                        }
-                    }
-                }
-        }
-    }
-}
-
 #Preview {
     VideoPlayerView(video: Video(
         id: "preview",

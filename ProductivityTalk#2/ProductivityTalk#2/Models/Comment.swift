@@ -7,7 +7,7 @@ struct Comment: Identifiable, Codable {
     let userId: String
     let text: String
     let createdAt: Date
-    var likeCount: Int
+    var secondBrainCount: Int
     
     // Additional metadata for UI
     var userUsername: String
@@ -19,7 +19,7 @@ struct Comment: Identifiable, Codable {
         case userId
         case text
         case createdAt
-        case likeCount
+        case secondBrainCount
         case userUsername
         case userProfilePicURL
     }
@@ -38,6 +38,7 @@ struct Comment: Identifiable, Codable {
               let createdAt = (data["createdAt"] as? Timestamp)?.dateValue(),
               let userUsername = data["userUsername"] as? String else {
             print("❌ Comment: Failed to initialize - Missing required fields")
+            print("❌ Comment: Available fields: \(data.keys.joined(separator: ", "))")
             return nil
         }
         
@@ -45,11 +46,12 @@ struct Comment: Identifiable, Codable {
         self.userId = userId
         self.text = text
         self.createdAt = createdAt
-        self.likeCount = (data["likeCount"] as? Int) ?? 0
+        self.secondBrainCount = (data["secondBrainCount"] as? Int) ?? 0
         self.userUsername = userUsername
         self.userProfilePicURL = data["userProfilePicURL"] as? String
         
         print("✅ Comment: Successfully initialized comment with ID: \(id)")
+        print("📊 Comment: Second brain count: \(secondBrainCount)")
     }
     
     // Initialize directly
@@ -60,11 +62,12 @@ struct Comment: Identifiable, Codable {
         self.userId = userId
         self.text = text
         self.createdAt = Date()
-        self.likeCount = 0
+        self.secondBrainCount = 0
         self.userUsername = userUsername
         self.userProfilePicURL = userProfilePicURL
         
         print("✅ Comment: Created new comment with ID: \(id)")
+        print("🧠 Comment: Initialized with 0 second brains")
     }
     
     // Convert to Firestore data
@@ -74,7 +77,7 @@ struct Comment: Identifiable, Codable {
             "userId": userId,
             "text": text,
             "createdAt": Timestamp(date: createdAt),
-            "likeCount": likeCount,
+            "secondBrainCount": secondBrainCount,
             "userUsername": userUsername
         ]
         
@@ -83,6 +86,7 @@ struct Comment: Identifiable, Codable {
         }
         
         print("✅ Comment: Converted comment data to Firestore format")
+        print("🧠 Comment: Current second brain count: \(secondBrainCount)")
         return data
     }
 } 
