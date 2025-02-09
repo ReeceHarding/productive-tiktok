@@ -3,14 +3,12 @@ import FirebaseFirestore
 import FirebaseStorage
 import PhotosUI
 import SwiftUI
-import Combine
 
 @MainActor
 class ProfileViewModel: ObservableObject {
     @Published private(set) var user: AppUser?
     @Published private(set) var isLoading = false
     @Published private(set) var error: String?
-    @Published var showImagePicker = false
     @Published var showEditProfile = false
     @Published var selectedItem: PhotosPickerItem? {
         didSet { Task { await loadTransferrable(from: selectedItem) } }
@@ -18,7 +16,6 @@ class ProfileViewModel: ObservableObject {
     
     private let db = Firestore.firestore()
     private let storage = Storage.storage()
-    private var cancellables = Set<AnyCancellable>()
     
     init() {
         print("👤 ProfileViewModel: Initializing")
@@ -57,7 +54,7 @@ class ProfileViewModel: ObservableObject {
     }
     
     @MainActor
-    func updateProfile(username: String, email: String, bio: String?) async {
+    func updateProfile(username: String, bio: String?) async {
         guard let userId = UserDefaults.standard.string(forKey: "userId") else {
             self.error = "User not logged in"
             return
@@ -68,16 +65,10 @@ class ProfileViewModel: ObservableObject {
         do {
             let updateData: [String: Any] = [
                 "username": username,
-                "email": email,
                 "bio": bio as Any
             ]
             
-            // Create a local copy that's Sendable
-            @Sendable func updateUserData() async throws {
-                try await db.collection("users").document(userId).updateData(updateData)
-            }
-            
-            try await updateUserData()
+            try await db.collection("users").document(userId).updateData(updateData)
             print("✅ ProfileViewModel: Successfully updated profile")
             await loadUserData()
         } catch {
@@ -119,7 +110,7 @@ class ProfileViewModel: ObservableObject {
             
             try await db.collection("users").document(userId).updateData([
                 "profilePicURL": downloadURL.absoluteString
-            ] as [String: Any])
+            ])
             
             print("✅ ProfileViewModel: Successfully uploaded profile image")
             await loadUserData()
@@ -140,20 +131,5 @@ class ProfileViewModel: ObservableObject {
             print("❌ ProfileViewModel: Error signing out: \(error.localizedDescription)")
             self.error = "Failed to sign out: \(error.localizedDescription)"
         }
-    }
-    
-    func formatNumber(_ number: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        
-        if number >= 1_000_000 {
-            formatter.positiveSuffix = "M"
-            return formatter.string(from: NSNumber(value: Double(number) / 1_000_000)) ?? "\(number)"
-        } else if number >= 1_000 {
-            formatter.positiveSuffix = "K"
-            return formatter.string(from: NSNumber(value: Double(number) / 1_000)) ?? "\(number)"
-        }
-        
-        return formatter.string(from: NSNumber(value: number)) ?? "\(number)"
     }
 } 

@@ -45,14 +45,6 @@ public class VideoPlayerViewModel: ObservableObject {
     @Published public var showControls = true
     @Published public var isPlaying = false
     
-    // MARK: - Extended Playback & Loop
-    /// Tracks cumulative watch time across loops. If a video is 30 seconds long and user loops once, watchTime can reach 60, etc.
-    @Published public var watchTime: Double = 0.0
-    
-    /// The duration of the video as soon as the asset is loaded.
-    /// Helps us track how many times the user has effectively gone beyond 100%.
-    public var videoDuration: Double = 0.0
-    
     private var observers: [NSKeyValueObservation] = []
     private var timeObserverToken: Any?
     private var deinitHandler: (() -> Void)?
@@ -65,7 +57,6 @@ public class VideoPlayerViewModel: ObservableObject {
     
     // Additional concurrency
     private var isCleaningUp = false
-    private var watchTimeTimer: Timer?
     
     public init(video: Video) {
         self.video = video
@@ -117,6 +108,7 @@ public class VideoPlayerViewModel: ObservableObject {
         }
     }
     
+    @MainActor
     private func cleanup() {
         if isCleaningUp {
             return
@@ -145,32 +137,18 @@ public class VideoPlayerViewModel: ObservableObject {
         LoggingService.debug("Cleaned up player resources", component: "Player")
     }
     
-    private func cleanupTimer() {
-        watchTimeTimer?.invalidate()
-        watchTimeTimer = nil
-    }
-    
-    // MARK: - Cleanup
-    private nonisolated func cleanupResources() {
-        // This function contains only thread-safe cleanup operations
-        // No actor-isolated properties are accessed here
-    }
-    
     deinit {
         // Since we're in deinit, we need to be careful about actor isolation
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             let videoId = self.video.id
-            self.cleanupTimer()
             self.deinitHandler?()
+            self.cleanup() // Call cleanup on MainActor
             LoggingService.debug("VideoPlayerViewModel deinit for video \(videoId)", component: "Player")
         }
-        
-        // Call thread-safe cleanup immediately
-        cleanupResources()
     }
     
-    public func loadVideo() {
+    public func loadVideo() async {
         LoggingService.video("Starting loadVideo for \(video.id)", component: "Player")
         isLoading = true
         
@@ -194,9 +172,7 @@ public class VideoPlayerViewModel: ObservableObject {
             "AVURLAssetPreferPreciseDurationAndTimingKey": false
         ])
         
-        Task {
-            await setupNewPlayer(with: asset)
-        }
+        await setupNewPlayer(with: asset)
     }
     
     private func setupNewPlayer(with asset: AVAsset) async {
@@ -266,8 +242,13 @@ public class VideoPlayerViewModel: ObservableObject {
                 case .readyToPlay:
                     LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                     // Start buffering only when player is ready
-                    await player.preroll(atRate: 1.0)
-                    LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
+                    do {
+                        if await player.preroll(atRate: 1.0) {
+                            LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
+                        } else {
+                            LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
+                        }
+                    }
                 default:
                     break
                 }
@@ -296,9 +277,8 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private func updateWatchTime() async {
         guard !isCleaningUp else { return }
-        if isPlaying {
-            watchTime += 0.5
-            LoggingService.debug("[PlayerVM] watchTime = \(watchTime) (video: \(video.id))", component: "Player")
+        if isPlaying, let currentTime = player?.currentTime().seconds {
+            LoggingService.debug("[PlayerVM] watchTime = \(currentTime) (video: \(video.id))", component: "Player")
         }
     }
     
@@ -318,42 +298,81 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     public func addToSecondBrain() async throws {
-        let wasInSecondBrain = isInSecondBrain
-        isInSecondBrain = true
-        showBrainAnimation = true
-        
-        let data = [
-            "brainCount": FieldValue.increment(Int64(1)),
-            "updatedAt": FieldValue.serverTimestamp()
-        ] as [String: Any]
-        
-        do {
-            try await updateVideoData(data)
-            brainCount += 1
-            LoggingService.success("Added video \(video.id) to second brain", component: "Player")
-        } catch {
-            isInSecondBrain = wasInSecondBrain
-            LoggingService.error("Failed to add video \(video.id) to second brain: \(error.localizedDescription)", component: "Player")
-            throw error
+        guard let userId = Auth.auth().currentUser?.uid else {
+            LoggingService.error("No user ID found when trying to add to second brain", component: "Player")
+            throw NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not logged in"])
         }
-    }
-    
-    private func removeFromSecondBrain() async throws {
-        let wasInSecondBrain = isInSecondBrain
-        isInSecondBrain = false
         
-        let data = [
-            "brainCount": FieldValue.increment(Int64(-1)),
-            "updatedAt": FieldValue.serverTimestamp()
-        ] as [String: Any]
+        let wasInSecondBrain = isInSecondBrain
         
         do {
-            try await updateVideoData(data)
-            brainCount -= 1
-            LoggingService.success("Removed video \(video.id) from second brain", component: "Player")
+            // Get reference to the user's second brain collection
+            let secondBrainRef = firestore.collection("users")
+                .document(userId)
+                .collection("secondBrain")
+                .document(video.id)
+            
+            // Get reference to the video document
+            let videoRef = firestore.collection("videos").document(video.id)
+            
+            let _ = try await firestore.runTransaction { [weak self] (transaction, errorPointer) -> Any? in
+                guard let self = self else { return nil }
+                
+                let secondBrainDoc: DocumentSnapshot
+                
+                do {
+                    secondBrainDoc = try transaction.getDocument(secondBrainRef)
+                } catch let fetchError as NSError {
+                    errorPointer?.pointee = fetchError
+                    return nil
+                }
+                
+                // Update watch time
+                transaction.updateData([
+                    "watchTime": FieldValue.serverTimestamp()
+                ], forDocument: videoRef)
+                
+                if secondBrainDoc.exists {
+                    // Remove from second brain
+                    transaction.deleteDocument(secondBrainRef)
+                    transaction.updateData([
+                        "brainCount": FieldValue.increment(Int64(-1)),
+                        "updatedAt": FieldValue.serverTimestamp()
+                    ], forDocument: videoRef)
+                    
+                    Task { @MainActor in
+                        self.isInSecondBrain = false
+                        self.brainCount -= 1
+                        self.showBrainAnimation = false
+                    }
+                    LoggingService.success("Removed video \(self.video.id) from second brain", component: "Player")
+                } else {
+                    // Add to second brain
+                    transaction.setData([
+                        "videoId": self.video.id,
+                        "addedAt": FieldValue.serverTimestamp()
+                    ], forDocument: secondBrainRef)
+                    
+                    transaction.updateData([
+                        "brainCount": FieldValue.increment(Int64(1)),
+                        "updatedAt": FieldValue.serverTimestamp()
+                    ], forDocument: videoRef)
+                    
+                    Task { @MainActor in
+                        self.isInSecondBrain = true
+                        self.brainCount += 1
+                        self.showBrainAnimation = true
+                    }
+                    LoggingService.success("Added video \(self.video.id) to second brain", component: "Player")
+                }
+                
+                return nil
+            }
         } catch {
-            isInSecondBrain = wasInSecondBrain
-            LoggingService.error("Failed to remove video \(video.id) from second brain: \(error.localizedDescription)", component: "Player")
+            await MainActor.run {
+                self.isInSecondBrain = wasInSecondBrain
+            }
+            LoggingService.error("Failed to toggle second brain for video \(video.id): \(error.localizedDescription)", component: "Player")
             throw error
         }
     }
@@ -394,7 +413,7 @@ public class VideoPlayerViewModel: ObservableObject {
         
         if player == nil {
             LoggingService.debug("Player was nil, loading video first", component: "PlayerVM")
-            loadVideo()
+            await loadVideo()
         }
         
         guard let player = player else {
@@ -535,19 +554,6 @@ public class VideoPlayerViewModel: ObservableObject {
                 try await Task.sleep(nanoseconds: UInt64(stepDuration * 1_000_000_000))
             } catch {
                 print("Error during volume fade sleep: \(error)")
-            }
-        }
-    }
-    
-    private func startWatchTimeTimer() {
-        watchTimeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            Task { @MainActor in
-                guard !self.isCleaningUp else { return }
-                if self.isPlaying {
-                    self.watchTime += 0.5
-                    LoggingService.debug("[PlayerVM] watchTime = \(self.watchTime) (video: \(self.video.id))", component: "Player")
-                }
             }
         }
     }

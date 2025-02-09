@@ -97,7 +97,7 @@ final class VideoPlayerViewModelTests: XCTestCase {
         XCTAssertFalse(sut.isLoading)
         
         // Start loading
-        sut.loadVideo()
+        await sut.loadVideo()
         
         // Loading state
         XCTAssertTrue(sut.isLoading)

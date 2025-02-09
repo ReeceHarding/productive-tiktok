@@ -25,7 +25,7 @@ extension AVAsset {
                     _ = try await load(.preferredTransform)
                 default:
                     // For keys that don't have AVAsyncProperty equivalents,
-                    // we need to use the older API even in iOS 16+
+                    // we need to fall back to the older API even in iOS 16+
                     var error: NSError?
                     let status = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AVKeyValueStatus, Error>) in
                         DispatchQueue.global().async {

@@ -1,8 +1,8 @@
 import SwiftUI
+import PhotosUI
 
 struct ProfileView: View {
     @StateObject private var viewModel = ProfileViewModel()
-    @StateObject private var secondBrainViewModel = SecondBrainViewModel()
     @State private var showSignOutAlert = false
     
     var body: some View {
@@ -20,29 +20,34 @@ struct ProfileView: View {
                 .ignoresSafeArea()
                 
                 ScrollView {
-                    VStack(spacing: 20) {
+                    VStack(spacing: 24) {
                         // Profile Header
                         VStack(spacing: 16) {
-                            if let profilePicURL = viewModel.user?.profilePicURL,
-                               let url = URL(string: profilePicURL) {
-                                AsyncImage(url: url) { image in
-                                    image
-                                        .resizable()
-                                        .scaledToFill()
-                                } placeholder: {
-                                    ProgressView()
-                                }
-                                .frame(width: 120, height: 120)
-                                .clipShape(Circle())
-                                .overlay(Circle().stroke(Color.gray.opacity(0.2), lineWidth: 2))
-                            } else {
-                                Image(systemName: "person.circle.fill")
-                                    .resizable()
-                                    .scaledToFit()
+                            // Profile Picture
+                            PhotosPicker(selection: $viewModel.selectedItem,
+                                       matching: .images) {
+                                if let profilePicURL = viewModel.user?.profilePicURL,
+                                   let url = URL(string: profilePicURL) {
+                                    AsyncImage(url: url) { image in
+                                        image
+                                            .resizable()
+                                            .scaledToFill()
+                                    } placeholder: {
+                                        ProgressView()
+                                    }
                                     .frame(width: 120, height: 120)
-                                    .foregroundColor(.gray)
+                                    .clipShape(Circle())
+                                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 2))
+                                } else {
+                                    Image(systemName: "person.circle.fill")
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(width: 120, height: 120)
+                                        .foregroundColor(.gray)
+                                }
                             }
                             
+                            // User Info
                             VStack(spacing: 8) {
                                 Text(viewModel.user?.username ?? "Username")
                                     .font(.title2)
@@ -56,79 +61,36 @@ struct ProfileView: View {
                                         .padding(.horizontal)
                                 }
                                 
-                                Button("Edit Profile") {
+                                Button(action: {
                                     viewModel.showEditProfile = true
+                                }) {
+                                    Text("Edit Profile")
+                                        .font(.headline)
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 12)
+                                        .background(
+                                            LinearGradient(
+                                                gradient: Gradient(colors: [.blue, .purple]),
+                                                startPoint: .leading,
+                                                endPoint: .trailing
+                                            )
+                                        )
+                                        .cornerRadius(10)
                                 }
-                                .buttonStyle(.bordered)
-                                .tint(.blue)
+                                .padding(.horizontal, 32)
+                                .padding(.top, 8)
                             }
                         }
                         .padding()
-                        
-                        // Stats
-                        HStack(spacing: 40) {
-                            VStack {
-                                Text(viewModel.formatNumber(viewModel.user?.totalSecondBrainSaves ?? 0))
-                                    .font(.title3)
-                                    .fontWeight(.bold)
-                                Text("Insights")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            VStack {
-                                Text(viewModel.formatNumber(viewModel.user?.totalQuotesSaved ?? 0))
-                                    .font(.title3)
-                                    .fontWeight(.bold)
-                                Text("Quotes")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            VStack {
-                                Text(viewModel.formatNumber(viewModel.user?.totalTranscriptsSaved ?? 0))
-                                    .font(.title3)
-                                    .fontWeight(.bold)
-                                Text("Transcripts")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
+                        .background(Color(uiColor: .systemBackground).opacity(0.8))
+                        .cornerRadius(20)
+                        .shadow(radius: 5)
                         .padding()
-                        .background(Color(uiColor: .systemGray6))
-                        .cornerRadius(12)
-                        .padding(.horizontal)
-                        
-                        // Recent Activity
-                        VStack(alignment: .leading, spacing: 16) {
-                            Text("Recent Activity")
-                                .font(.headline)
-                                .padding(.horizontal)
-                            
-                            if viewModel.isLoading {
-                                ProgressView()
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                            } else if let error = viewModel.error {
-                                Text(error)
-                                    .foregroundColor(.red)
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                            } else {
-                                // Add recent activity items here
-                                Text("No recent activity")
-                                    .foregroundColor(.secondary)
-                                    .frame(maxWidth: .infinity)
-                                    .padding()
-                            }
-                        }
                     }
                 }
             }
             .navigationTitle("Profile")
-            .sheet(isPresented: $viewModel.showEditProfile) {
-                EditProfileView(viewModel: viewModel)
-            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showSignOutAlert = true }) {
@@ -147,13 +109,14 @@ struct ProfileView: View {
             } message: {
                 Text("Are you sure you want to sign out?")
             }
+            .sheet(isPresented: $viewModel.showEditProfile) {
+                EditProfileView(viewModel: viewModel)
+            }
             .task {
                 await viewModel.loadUserData()
-                await secondBrainViewModel.updateStatistics()
             }
             .refreshable {
                 await viewModel.loadUserData()
-                await secondBrainViewModel.updateStatistics()
             }
         }
     }

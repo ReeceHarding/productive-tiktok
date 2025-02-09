@@ -75,32 +75,58 @@ struct MainTabView: View {
         TabView {
             VideoFeedView()
                 .tabItem {
-                    Label("For You", systemImage: "play.circle.fill")
+                    VStack {
+                        Image(systemName: "play.circle.fill")
+                        Text("For You")
+                    }
                 }
             
             NavigationView {
                 InsightsView()
             }
             .tabItem {
-                Label("Second Brain", systemImage: "brain.head.profile")
+                VStack {
+                    Image(systemName: "brain.head.profile")
+                    Text("Second Brain")
+                }
             }
             
             VideoUploadView()
                 .tabItem {
-                    Label("Upload", systemImage: "video.badge.plus")
+                    VStack {
+                        Image(systemName: "video.badge.plus")
+                        Text("Upload")
+                    }
                 }
             
             Text("Calendar")
                 .tabItem {
-                    Label("Calendar", systemImage: "calendar")
+                    VStack {
+                        Image(systemName: "calendar")
+                        Text("Calendar")
+                    }
                 }
             
             NavigationView {
                 ProfileView()
             }
             .tabItem {
-                Label("Profile", systemImage: "person.circle")
+                VStack {
+                    Image(systemName: "person.circle")
+                    Text("Profile")
+                }
             }
+        }
+        .tint(.blue)
+        .onAppear {
+            // Customize TabView appearance
+            let appearance = UITabBarAppearance()
+            appearance.configureWithOpaqueBackground()
+            appearance.backgroundColor = .systemBackground
+            
+            // Use this appearance for both normal and scrolling
+            UITabBar.appearance().standardAppearance = appearance
+            UITabBar.appearance().scrollEdgeAppearance = appearance
         }
         .overlay {
             if isSigningOut {
@@ -116,14 +142,6 @@ struct MainTabView: View {
                                 .font(.headline)
                         }
                     }
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: { showSignOutAlert = true }) {
-                    Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
-                }
-                .disabled(isSigningOut)
             }
         }
         .alert("Sign Out", isPresented: $showSignOutAlert) {

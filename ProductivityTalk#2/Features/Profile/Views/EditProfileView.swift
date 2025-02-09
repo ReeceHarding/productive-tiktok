@@ -1,18 +1,15 @@
 import SwiftUI
-import PhotosUI
 
 struct EditProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: ProfileViewModel
     
     @State private var username: String
-    @State private var email: String
     @State private var bio: String
     
     init(viewModel: ProfileViewModel) {
         self.viewModel = viewModel
         _username = State(initialValue: viewModel.user?.username ?? "")
-        _email = State(initialValue: viewModel.user?.email ?? "")
         _bio = State(initialValue: viewModel.user?.bio ?? "")
     }
     
@@ -30,52 +27,52 @@ struct EditProfileView: View {
                 )
                 .ignoresSafeArea()
                 
-                Form {
-                    Section(header: Text("Profile Picture")) {
-                        PhotosPicker(selection: $viewModel.selectedItem,
-                                   matching: .images) {
-                            HStack {
-                                Text("Change Profile Picture")
-                                Spacer()
-                                Image(systemName: "photo.circle.fill")
-                                    .foregroundStyle(.blue)
-                            }
+                ScrollView {
+                    VStack(spacing: 20) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Username")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                            TextField("Username", text: $username)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .autocapitalization(.none)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Bio")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                            TextEditor(text: $bio)
+                                .frame(height: 100)
+                                .padding(4)
+                                .background(Color(uiColor: .systemBackground))
+                                .cornerRadius(8)
                         }
                     }
-                    
-                    Section(header: Text("Basic Information")) {
-                        TextField("Username", text: $username)
-                            .textContentType(.username)
-                        
-                        TextField("Email", text: $email)
-                            .textContentType(.emailAddress)
-                            .keyboardType(.emailAddress)
-                            .autocapitalization(.none)
-                    }
-                    
-                    Section(header: Text("About")) {
-                        TextEditor(text: $bio)
-                            .frame(height: 100)
+                    .padding()
+                    .background(Color(uiColor: .systemBackground).opacity(0.8))
+                    .cornerRadius(16)
+                    .shadow(radius: 5)
+                    .padding()
+                }
+            }
+            .navigationTitle("Edit Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
                     }
                 }
-                .navigationTitle("Edit Profile")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Cancel") {
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Save") {
+                        Task {
+                            await viewModel.updateProfile(username: username, bio: bio)
                             dismiss()
                         }
                     }
-                    
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Save") {
-                            Task {
-                                await viewModel.updateProfile(username: username, email: email, bio: bio)
-                                dismiss()
-                            }
-                        }
-                        .disabled(viewModel.isLoading)
-                    }
+                    .disabled(viewModel.isLoading)
                 }
             }
             .alert("Error", isPresented: .constant(viewModel.error != nil)) {

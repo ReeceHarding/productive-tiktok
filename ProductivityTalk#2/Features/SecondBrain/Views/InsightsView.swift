@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 struct InsightsView: View {
     @StateObject private var viewModel = InsightsViewModel()
@@ -26,17 +25,19 @@ struct InsightsView: View {
                         Text("Insight of the Day")
                             .font(.title)
                             .fontWeight(.bold)
+                            .foregroundColor(.white)
                         
                         Text("A key insight to ponder")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.white.opacity(0.7))
                         
                         if let insight = viewModel.dailyInsight {
                             Text(insight)
                                 .font(.title3)
                                 .italic()
+                                .foregroundColor(.white)
                                 .padding()
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color(uiColor: .systemBackground))
+                                .background(Color.black.opacity(0.7))
                                 .cornerRadius(12)
                                 .shadow(radius: 2)
                         } else if viewModel.isLoading {
@@ -45,7 +46,7 @@ struct InsightsView: View {
                                 .padding()
                         } else {
                             Text("No insights available yet")
-                                .foregroundColor(.gray)
+                                .foregroundColor(.white.opacity(0.7))
                                 .padding()
                         }
                         
@@ -72,7 +73,7 @@ struct InsightsView: View {
                         }
                     }
                     .padding()
-                    .background(Color(uiColor: .secondarySystemBackground))
+                    .background(Color.black.opacity(0.7))
                     .cornerRadius(16)
                     
                     // Quick Stats
@@ -80,45 +81,53 @@ struct InsightsView: View {
                         Text("Quick Stats")
                             .font(.title2)
                             .fontWeight(.bold)
+                            .foregroundColor(.white)
                         
                         Text("Your learning progress")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.white.opacity(0.7))
                         
                         VStack(spacing: 16) {
                             HStack {
                                 Text("Total Insights")
+                                    .foregroundColor(.white)
                                 Spacer()
                                 Text("\(viewModel.savedInsights.count)")
                                     .font(.title2)
                                     .fontWeight(.bold)
+                                    .foregroundColor(.white)
                             }
                             
                             HStack {
                                 Text("This Week")
+                                    .foregroundColor(.white)
                                 Spacer()
                                 Text("\(viewModel.savedInsights.filter { Calendar.current.isDate($0.savedAt, equalTo: Date(), toGranularity: .weekOfYear) }.count)")
                                     .font(.title2)
                                     .fontWeight(.bold)
+                                    .foregroundColor(.white)
                             }
                             
                             HStack {
                                 Text("Learning Streak")
+                                    .foregroundColor(.white)
                                 Spacer()
                                 if let user = secondBrainViewModel.user {
                                     Text("\(user.currentStreak) days")
                                         .font(.title2)
                                         .fontWeight(.bold)
+                                        .foregroundColor(.white)
                                 } else {
                                     Text("0 days")
                                         .font(.title2)
                                         .fontWeight(.bold)
+                                        .foregroundColor(.white)
                                 }
                             }
                         }
                         .padding()
                     }
                     .padding()
-                    .background(Color(uiColor: .systemBackground))
+                    .background(Color.black.opacity(0.7))
                     .cornerRadius(12)
                     
                     // Category Filter
@@ -146,9 +155,10 @@ struct InsightsView: View {
                         Text("Saved Insights")
                             .font(.title2)
                             .fontWeight(.bold)
+                            .foregroundColor(.white)
                         
                         Text("Your personal collection of valuable content")
-                            .foregroundColor(.gray)
+                            .foregroundColor(.white.opacity(0.7))
                         
                         if viewModel.isLoading {
                             LoadingAnimation(message: "Loading saved insights...")
@@ -156,7 +166,7 @@ struct InsightsView: View {
                                 .padding()
                         } else if viewModel.savedInsights.isEmpty {
                             Text("No saved insights yet")
-                                .foregroundColor(.gray)
+                                .foregroundColor(.white.opacity(0.7))
                                 .frame(maxWidth: .infinity)
                                 .padding()
                         } else {
@@ -203,7 +213,7 @@ struct InsightCard: View {
                     .font(.body)
                     .padding()
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(uiColor: .systemBackground))
+                    .background(Color.black.opacity(0.8))
                     .cornerRadius(12)
                 
                 if insight.quotes.count > 1 {
@@ -248,7 +258,7 @@ struct InsightCard: View {
             }
         }
         .padding()
-        .background(Color(uiColor: .secondarySystemBackground))
+        .background(Color.black.opacity(0.7))
         .cornerRadius(16)
     }
 }
@@ -275,7 +285,7 @@ struct InsightDetailView: View {
                             .font(.body)
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(uiColor: .systemBackground))
+                            .background(Color.black.opacity(0.8))
                             .cornerRadius(12)
                     }
                 }

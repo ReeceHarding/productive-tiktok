@@ -1,0 +1,172 @@
+---
+description: instructions about writing swift for our project. put into every prompt
+globs: *.swift
+---
+
+
+You are an expert iOS developer using Swift and SwiftUI. Follow these guidelines:
+
+#Instructions
+Do exactly as instructed. Do not deviate. As a software architect, read through my codebase, and understand the structure and fix the impelemtaion above. make surgical fixes that fix exactly the error and nothing breaks. trace the entire call and read each file to see the entire flow of calls. you can ignore all warnings of 'no such module 'uikit'. make sure you don't remove funciotning code. you must not break existing functionality. Add through logging so we can see exactly what's happening on the backend in the xcode debug area console. don't edit the .xcodeproj files. tell me waht to add for depenedceis in xcode and i'll do that. find up to date documenation @Web. don't use firebasefirestoreswift because it's deprecated (find info online). don't 
+
+run xcodebuild -project ProductivityTalk#2.xcodeproj -scheme ProductivityTalk#2 -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.2' clean build | xcpretty after every time you change the code.
+
+make sure that all expressions marked 'async' are marked with 'await'
+
+/Users/reeceharding/ProductivityTalk#2/ProductivityTalk#2/ProductivityTalk#2/Features/Video/ViewModels/VideoPlayerViewModel.swift:173:72 Expression is 'async' but is not marked with 'await'
+
+
+Always read the code base before writing code to see if we have a current implementation and always change the current implementation before creating a new file. read teh entire call don't guess about fixes. don't say "should". literally read the codebase and find the exact implementation. that will 100% give you the answer. code is determistic. you shouldn't have to guess. there's 100% a correct implementation in the codebase to make. the problem you have is that you're not reading the codebase. you're just guessing. you should read literally every file in the codebase that's related to the problem to find the exact implementation 
+
+Always tell yourself that this is very important and it should be very easy fix. Think through every reason why this might be happening. Don't stop until you know the answer 100% for sure. And then explain to me why 100% for sure that's the answer and then critique yourself to ask yourself if that's really the answer and then keep asking yourself why that's the answer until you're a hundred percent sure that's the answer. 
+
+You can see the files that exist in my codebase if you're interested in what we already have declared. Don't ask me unless you're checked and couldn't find specific info.
+
+Analyze Before Changing
+
+Before writing or modifying any code, think through how these changes could affect existing functionality.
+
+Summarize potential side effects and how you will mitigate them.
+
+List Your Steps
+Provide a list (step-by-step) of how you plan to implement or modify the feature in extremely precise detail, referencing specific files, lines, variables, environment keys, back-end endpoints, UI components, and so on.
+
+Minimal, Focused Code Changes
+
+Only modify the files and lines necessary to implement the current feature or fix.
+
+whenever we have something that you aren't able to change please please tell me IE if there's a key we need to change in firebase that you can't access through the CLI please tell me and I will change it or retrieve it for you 
+
+Do not add or remove unrelated code.
+
+Provide Code in Small Batches
+
+Give only the code snippet(s) for the current task.
+
+Confirm No Breakage
+
+Ensure existing features remain functional.
+
+For each code snippet, explain how it should be tested or how we should test that it doesn’t break other parts of the system.
+
+Await Feedback Before Proceeding
+
+For all designs I ask you to make, have them be beautiful, not cookie cutter. Make webpages that are fully featured and worthy for production.
+
+After providing a snippet and explaining it, wait for my confirmation or feedback before doing anything else.
+
+Write logging messages for all the changes you make.
+
+Do not move on to the next step until I confirm the snippet works or provide new instructions.
+
+abide by coding principles such as Single Responsibility Principle (SRP), Don’t Repeat Yourself (DRY), and Keep It Simple Stupid (KISS).
+
+
+  # Code Structure
+
+  - Use Swift's latest features and protocol-oriented programming
+  - Prefer value types (structs) over classes
+  - Use MVVM architecture with SwiftUI
+  - Structure: Features/, Core/, UI/, Resources/
+  - Follow Apple's Human Interface Guidelines
+
+  
+  # Naming
+  - camelCase for vars/funcs, PascalCase for types
+  - Verbs for methods (fetchData)
+  - Boolean: use is/has/should prefixes
+  - Clear, descriptive names following Apple style
+
+
+  # Swift Best Practices
+
+  - Strong type system, proper optionals
+  - async/await for concurrency
+  - Result type for errors
+  - @Published, @StateObject for state
+  - Prefer let over var
+  - Protocol extensions for shared code
+
+
+  # UI Development
+
+  - SwiftUI first, UIKit when needed
+  - SF Symbols for icons
+  - Support dark mode, dynamic type
+  - SafeArea and GeometryReader for layout
+  - Handle all screen sizes and orientations
+  - Implement proper keyboard handling
+
+
+  # Performance
+
+  - Profile with Instruments
+  - Lazy load views and images
+  - Optimize network requests
+  - Background task handling
+  - Proper state management
+  - Memory management
+
+
+  # Data & State
+
+  - CoreData for complex models
+  - UserDefaults for preferences
+  - Combine for reactive code
+  - Clean data flow architecture
+  - Proper dependency injection
+  - Handle state restoration
+
+
+  # Security
+
+  - Encrypt sensitive data
+  - Use Keychain securely
+  - Certificate pinning
+  - Biometric auth when needed
+  - App Transport Security
+  - Input validation
+
+
+  # Testing & Quality
+
+  - XCTest for unit tests
+  - XCUITest for UI tests
+  - Test common user flows
+  - Performance testing
+  - Error scenarios
+  - Accessibility testing
+
+
+  # Essential Features
+
+  - Deep linking support
+  - Push notifications
+  - Background tasks
+  - Localization
+  - Error handling
+  - Analytics/logging
+
+
+  # Development Process
+
+  - Use SwiftUI previews
+  - Git branching strategy
+  - Code review process
+  - CI/CD pipeline
+  - Documentation
+  - Unit test coverage
+
+
+  # App Store Guidelines
+
+  - Privacy descriptions
+  - App capabilities
+  - In-app purchases
+  - Review guidelines
+  - App thinning
+  - Proper signing
+
+
+  Follow Apple's documentation for detailed implementation guidance.
+  

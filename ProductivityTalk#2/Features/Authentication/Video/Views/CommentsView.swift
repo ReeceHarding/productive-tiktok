@@ -1,5 +1,6 @@
 import SwiftUI
-import UIKit
+import Foundation
+import FirebaseFirestore
 
 struct CommentsView: View {
     let video: Video
@@ -49,19 +50,23 @@ struct CommentsView: View {
                             .font(.title2)
                     }
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
                 
                 // Informational text with icon
-                HStack(spacing: 8) {
+                HStack(spacing: 12) {
                     Image(systemName: "brain.head.profile")
                         .foregroundStyle(.secondary)
+                        .font(.system(size: 18))
                     Text("Tap the brain icon to save insights")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 12)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
+                .background(Color.secondary.opacity(0.1))
                 
                 Divider()
                     .background(Color.secondary.opacity(0.2))
@@ -69,15 +74,16 @@ struct CommentsView: View {
                 // Comments List with Loading and Empty States
                 Group {
                     if viewModel.isLoading {
-                        VStack(spacing: 12) {
+                        VStack(spacing: 16) {
                             ProgressView()
-                                .scaleEffect(1.2)
+                                .scaleEffect(1.5)
                             Text("Loading comments...")
                                 .foregroundStyle(.secondary)
+                                .font(.subheadline)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if viewModel.comments.isEmpty {
-                        VStack(spacing: 16) {
+                        VStack(spacing: 20) {
                             Image(systemName: "bubble.left.and.bubble.right")
                                 .font(.system(size: 48))
                                 .foregroundStyle(.secondary)
@@ -91,18 +97,18 @@ struct CommentsView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         ScrollView {
-                            LazyVStack(spacing: 16) {
+                            LazyVStack(spacing: 20) {
                                 ForEach(viewModel.comments) { comment in
                                     CommentCell(comment: comment) {
                                         Task {
                                             await viewModel.toggleSecondBrain(for: comment)
                                         }
                                     }
-                                    .padding(.horizontal)
+                                    .padding(.horizontal, 20)
                                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                                 }
                             }
-                            .padding(.vertical)
+                            .padding(.vertical, 20)
                         }
                     }
                 }
@@ -112,13 +118,14 @@ struct CommentsView: View {
                 
                 // Comment Input
                 VStack(spacing: 8) {
-                    HStack(alignment: .bottom, spacing: 12) {
+                    HStack(alignment: .center, spacing: 12) {
                         TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
                             .textFieldStyle(.plain)
-                            .padding(12)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 16)
                             .background(
                                 RoundedRectangle(cornerRadius: 20)
-                                    .fill(Color(UIColor.systemBackground))
+                                    .fill(Color(.systemBackground))
                             )
                             .focused($isCommentFieldFocused)
                             .frame(maxHeight: 100)
@@ -137,19 +144,20 @@ struct CommentsView: View {
                         .disabled(viewModel.newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     
-                    // Character count
                     if !viewModel.newCommentText.isEmpty {
                         Text("\(viewModel.newCommentText.count)/1000")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .trailing)
-                            .padding(.horizontal)
+                            .padding(.horizontal, 4)
                     }
                 }
-                .padding()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color(.systemBackground).opacity(0.8))
             }
         }
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(.secondarySystemBackground))
         .alert("Error", isPresented: .constant(viewModel.error != nil)) {
             Button("OK") {
                 viewModel.error = nil
@@ -169,9 +177,9 @@ struct CommentCell: View {
     @State private var showFullText = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             // User Info
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 if let imageURL = comment.userProfileImageURL, let url = URL(string: imageURL) {
                     AsyncImage(url: url) { image in
                         image
@@ -181,15 +189,15 @@ struct CommentCell: View {
                         Image(systemName: "person.circle.fill")
                             .foregroundStyle(.secondary)
                     }
-                    .frame(width: 36, height: 36)
+                    .frame(width: 40, height: 40)
                     .clipShape(Circle())
                 } else {
                     Image(systemName: "person.circle.fill")
                         .foregroundStyle(.secondary)
-                        .font(.system(size: 36))
+                        .font(.system(size: 40))
                 }
                 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(comment.userName ?? "Anonymous")
                         .font(.subheadline)
                         .fontWeight(.semibold)
@@ -198,49 +206,48 @@ struct CommentCell: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-            }
-            
-            // Comment Text and Brain Button
-            HStack(alignment: .top, spacing: 12) {
-                if comment.text.count > 150 && !showFullText {
-                    Text(comment.text.prefix(150) + "...")
-                        .font(.body)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .onTapGesture {
-                            withAnimation {
-                                showFullText = true
-                            }
-                        }
-                } else {
-                    Text(comment.text)
-                        .font(.body)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .onTapGesture {
-                            if comment.text.count > 150 {
-                                withAnimation {
-                                    showFullText = false
-                                }
-                            }
-                        }
-                }
                 
-                Spacer(minLength: 16)
+                Spacer()
                 
                 Button(action: onBrainTap) {
                     Image(systemName: comment.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
                         .foregroundColor(comment.isInSecondBrain ? .blue : .gray)
-                        .font(.title3)
+                        .font(.system(size: 24))
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 2)
+            }
+            
+            // Comment Text
+            if comment.text.count > 150 && !showFullText {
+                Text(comment.text.prefix(150) + "...")
+                    .font(.body)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showFullText = true
+                        }
+                    }
+            } else {
+                Text(comment.text)
+                    .font(.body)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onTapGesture {
+                        if comment.text.count > 150 {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showFullText = false
+                            }
+                        }
+                    }
             }
         }
-        .padding()
+        .padding(20)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(UIColor.systemBackground))
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(.systemBackground))
                 .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1),
-                       radius: 8, x: 0, y: 2)
+                       radius: 10, x: 0, y: 4)
         )
     }
     
