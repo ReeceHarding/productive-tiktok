@@ -182,10 +182,10 @@ actor VideoProcessingService {
             let uploadTask = storageRef.putFile(from: fileURL, metadata: metadata)
             var lastReportedProgress: Int = -1
             
-            // Monitor progress
+            // Monitor progress more frequently
             uploadTask.observe(.progress) { snapshot in
                 let percentComplete = Int(100.0 * Double(snapshot.progress?.completedUnitCount ?? 0) / Double(snapshot.progress?.totalUnitCount ?? 1))
-                if percentComplete % 10 == 0 && percentComplete != lastReportedProgress {
+                if percentComplete != lastReportedProgress {  // Report every change
                     LoggingService.progress("Video upload", progress: Double(percentComplete) / 100.0, id: actualFilename)
                     LoggingService.debug("📊 Upload progress: \(percentComplete)% (\(ByteCountFormatter.string(fromByteCount: snapshot.progress?.completedUnitCount ?? 0, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: snapshot.progress?.totalUnitCount ?? 1, countStyle: .file)))", component: "Storage")
                     lastReportedProgress = percentComplete

@@ -72,6 +72,58 @@ struct VideoFeedView: View {
                         }
                     }
                 }
+                
+                // Always visible controls overlay
+                if let currentVideo = viewModel.videos.first(where: { $0.id == scrollPosition }) {
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 20) {
+                            Spacer()
+                            
+                            // Brain button
+                            Button {
+                                if let videoId = scrollPosition {
+                                    Task {
+                                        await viewModel.playerViewModels[videoId]?.addToSecondBrain()
+                                    }
+                                }
+                            } label: {
+                                VStack(spacing: 4) {
+                                    Image(systemName: viewModel.playerViewModels[currentVideo.id]?.isInSecondBrain == true ? "brain.head.profile.fill" : "brain.head.profile")
+                                        .font(.system(size: 32))
+                                        .foregroundColor(viewModel.playerViewModels[currentVideo.id]?.isInSecondBrain == true ? .blue : .white)
+                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                    
+                                    Text("\(currentVideo.brainCount)")
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                }
+                            }
+                            .buttonStyle(ScaleButtonStyle())
+                            
+                            // Comment Button
+                            Button {
+                                LoggingService.debug("Comment icon tapped", component: "Feed")
+                            } label: {
+                                VStack(spacing: 4) {
+                                    Image(systemName: "bubble.left")
+                                        .font(.system(size: 32))
+                                        .foregroundColor(.white)
+                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                    
+                                    Text("\(currentVideo.commentCount)")
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                }
+                            }
+                            .buttonStyle(ScaleButtonStyle())
+                        }
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 70)
+                    }
+                }
             }
         }
         .ignoresSafeArea(.all, edges: .top)

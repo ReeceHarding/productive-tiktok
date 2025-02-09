@@ -32,8 +32,18 @@ class VideoUploadViewModel: ObservableObject {
     func loadVideos() async {
         LoggingService.video("🎥 Starting to load selected videos (count: \(selectedItems.count))", component: "Upload")
         
-        for item in selectedItems {
+        // Immediately create upload states for all selected items
+        for _ in selectedItems {
             let id = UUID().uuidString
+            await MainActor.run {
+                self.uploadStates[id] = UploadState(progress: 0.0, isComplete: false, thumbnailImage: nil)
+                LoggingService.debug("Created initial upload state for video \(id)", component: "Upload")
+            }
+        }
+        
+        // Process each video
+        for (index, item) in selectedItems.enumerated() {
+            let id = Array(uploadStates.keys)[index]
             var tempURL: URL?
             
             LoggingService.debug("Processing video item with generated ID: \(id)", component: "Upload")

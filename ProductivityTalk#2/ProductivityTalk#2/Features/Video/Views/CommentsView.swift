@@ -1,4 +1,7 @@
 import SwiftUI
+import UIKit
+// Import models
+@_implementationOnly import ProductivityTalk_2
 
 struct CommentsView: View {
     let video: Video
@@ -13,82 +16,140 @@ struct CommentsView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Comments")
-                    .font(.title3)
-                    .fontWeight(.bold)
-                Spacer()
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+        ZStack {
+            // Background gradient
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color.blue.opacity(0.3),
+                    Color.purple.opacity(0.3)
+                ]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Text("Comments")
                         .font(.title2)
-                }
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 12)
-            
-            // Informational text
-            HStack {
-                Image(systemName: "brain.head.profile")
-                    .foregroundStyle(.secondary)
-                Text("Tap the brain icon to save comments")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 12)
-            
-            Divider()
-                .background(Color.secondary.opacity(0.2))
-            
-            // Comments List
-            ScrollView {
-                LazyVStack(spacing: 16) {
-                    ForEach(viewModel.comments) { comment in
-                        CommentCell(comment: comment) {
-                            Task {
-                                await viewModel.toggleSecondBrain(for: comment)
-                            }
-                        }
-                        .padding(.horizontal)
-                        .transition(.opacity)
+                        .fontWeight(.bold)
+                    
+                    if !viewModel.isLoading {
+                        Text("(\(viewModel.comments.count))")
+                            .foregroundStyle(.secondary)
+                            .font(.headline)
+                    }
+                    
+                    Spacer()
+                    
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.title2)
                     }
                 }
-                .padding(.vertical)
-            }
-            
-            Divider()
-                .background(Color.secondary.opacity(0.2))
-            
-            // Comment Input
-            HStack(alignment: .bottom, spacing: 12) {
-                TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(Color(UIColor.systemBackground))
-                    )
-                    .focused($isCommentFieldFocused)
-                    .frame(maxHeight: 100)
+                .padding(.horizontal)
+                .padding(.vertical, 12)
                 
-                Button {
-                    Task {
-                        await viewModel.addComment()
-                        isCommentFieldFocused = false
-                    }
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(viewModel.newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .blue)
+                // Informational text with icon
+                HStack(spacing: 8) {
+                    Image(systemName: "brain.head.profile")
+                        .foregroundStyle(.secondary)
+                    Text("Tap the brain icon to save insights")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-                .disabled(viewModel.newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .padding(.horizontal)
+                .padding(.bottom, 12)
+                
+                Divider()
+                    .background(Color.secondary.opacity(0.2))
+                
+                // Comments List with Loading and Empty States
+                Group {
+                    if viewModel.isLoading {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .scaleEffect(1.2)
+                            Text("Loading comments...")
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if viewModel.comments.isEmpty {
+                        VStack(spacing: 16) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .font(.system(size: 48))
+                                .foregroundStyle(.secondary)
+                            Text("No comments yet")
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+                            Text("Be the first to start the conversation!")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 16) {
+                                ForEach(viewModel.comments) { comment in
+                                    CommentCell(comment: comment) {
+                                        Task {
+                                            await viewModel.toggleSecondBrain(for: comment)
+                                        }
+                                    }
+                                    .padding(.horizontal)
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                                }
+                            }
+                            .padding(.vertical)
+                        }
+                    }
+                }
+                
+                Divider()
+                    .background(Color.secondary.opacity(0.2))
+                
+                // Comment Input
+                VStack(spacing: 8) {
+                    HStack(alignment: .bottom, spacing: 12) {
+                        TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 20)
+                                    .fill(Color(UIColor.systemBackground))
+                            )
+                            .focused($isCommentFieldFocused)
+                            .frame(maxHeight: 100)
+                        
+                        Button {
+                            Task {
+                                await viewModel.addComment()
+                                isCommentFieldFocused = false
+                            }
+                        } label: {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 32))
+                                .symbolRenderingMode(.hierarchical)
+                                .foregroundColor(viewModel.newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .blue)
+                        }
+                        .disabled(viewModel.newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    
+                    // Character count
+                    if !viewModel.newCommentText.isEmpty {
+                        Text("\(viewModel.newCommentText.count)/1000")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .padding(.horizontal)
+                    }
+                }
+                .padding()
             }
-            .padding()
         }
         .background(Color(UIColor.secondarySystemBackground))
         .alert("Error", isPresented: .constant(viewModel.error != nil)) {
@@ -107,6 +168,7 @@ struct CommentCell: View {
     let comment: Comment
     let onBrainTap: () -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @State private var showFullText = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -121,18 +183,18 @@ struct CommentCell: View {
                         Image(systemName: "person.circle.fill")
                             .foregroundStyle(.secondary)
                     }
-                    .frame(width: 32, height: 32)
+                    .frame(width: 36, height: 36)
                     .clipShape(Circle())
                 } else {
                     Image(systemName: "person.circle.fill")
                         .foregroundStyle(.secondary)
-                        .font(.title2)
+                        .font(.system(size: 36))
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(comment.userName ?? "Anonymous")
                         .font(.subheadline)
-                        .fontWeight(.medium)
+                        .fontWeight(.semibold)
                     
                     Text(timeAgo(from: comment.timestamp))
                         .font(.caption)
@@ -140,12 +202,29 @@ struct CommentCell: View {
                 }
             }
             
-            // Comment Text and Brain Button in same row
+            // Comment Text and Brain Button
             HStack(alignment: .top, spacing: 12) {
-                Text(comment.text)
-                    .font(.body)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.trailing, 4)
+                if comment.text.count > 150 && !showFullText {
+                    Text(comment.text.prefix(150) + "...")
+                        .font(.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onTapGesture {
+                            withAnimation {
+                                showFullText = true
+                            }
+                        }
+                } else {
+                    Text(comment.text)
+                        .font(.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onTapGesture {
+                            if comment.text.count > 150 {
+                                withAnimation {
+                                    showFullText = false
+                                }
+                            }
+                        }
+                }
                 
                 Spacer(minLength: 16)
                 
@@ -173,36 +252,30 @@ struct CommentCell: View {
         let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date, to: now)
         
         if let year = components.year, year > 0 {
-            return "\(year)y ago"
+            return "\(year)y"
         } else if let month = components.month, month > 0 {
-            return "\(month)mo ago"
+            return "\(month)mo"
         } else if let day = components.day, day > 0 {
-            return "\(day)d ago"
+            return "\(day)d"
         } else if let hour = components.hour, hour > 0 {
-            return "\(hour)h ago"
+            return "\(hour)h"
         } else if let minute = components.minute, minute > 0 {
-            return "\(minute)m ago"
+            return "\(minute)m"
         } else {
-            return "just now"
+            return "now"
         }
     }
 }
 
-#if DEBUG
-struct CommentsView_Previews: PreviewProvider {
-    static var previews: some View {
-        let sampleVideo = Video(
-            id: "preview",
-            ownerId: "user123",
-            videoURL: "sample.mp4",
-            thumbnailURL: "thumbnail.jpg",
-            title: "Sample Video",
-            tags: ["preview"],
-            description: "This is a sample video for preview",
-            ownerUsername: "previewUser"
-        )
-        
-        CommentsView(video: sampleVideo)
-    }
-}
-#endif 
+#Preview {
+    CommentsView(video: Video(
+        id: "preview",
+        ownerId: "user1",
+        videoURL: "",
+        thumbnailURL: "",
+        title: "Test Video",
+        tags: [],
+        description: "Test Description",
+        ownerUsername: "testUser"
+    ))
+} 

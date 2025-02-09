@@ -7,163 +7,176 @@ struct InsightsView: View {
     @State private var selectedCategory: String = "All"
     
     var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                // Insight of the Day
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Insight of the Day")
-                        .font(.title)
-                        .fontWeight(.bold)
-                    
-                    Text("A key insight to ponder")
-                        .foregroundColor(.gray)
-                    
-                    if let insight = viewModel.dailyInsight {
-                        Text(insight)
-                            .font(.title3)
-                            .italic()
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(uiColor: .systemBackground))
-                            .cornerRadius(12)
-                            .shadow(radius: 2)
-                    } else if viewModel.isLoading {
-                        LoadingAnimation(message: "Loading insight...")
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                    } else {
-                        Text("No insights available yet")
-                            .foregroundColor(.gray)
-                            .padding()
-                    }
-                    
-                    HStack {
-                        Button("Dismiss") {
-                            // Fetch a new insight
-                            Task {
-                                await viewModel.fetchDailyInsight()
-                            }
-                        }
-                        .buttonStyle(.bordered)
+        ZStack {
+            // Background gradient
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color.blue.opacity(0.3),
+                    Color.purple.opacity(0.3)
+                ]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Insight of the Day
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Insight of the Day")
+                            .font(.title)
+                            .fontWeight(.bold)
                         
-                        Spacer()
+                        Text("A key insight to ponder")
+                            .foregroundColor(.gray)
                         
                         if let insight = viewModel.dailyInsight {
-                            Button("Save for Later") {
-                                // Save the insight
+                            Text(insight)
+                                .font(.title3)
+                                .italic()
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(uiColor: .systemBackground))
+                                .cornerRadius(12)
+                                .shadow(radius: 2)
+                        } else if viewModel.isLoading {
+                            LoadingAnimation(message: "Loading insight...")
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                        } else {
+                            Text("No insights available yet")
+                                .foregroundColor(.gray)
+                                .padding()
+                        }
+                        
+                        HStack {
+                            Button("Dismiss") {
+                                // Fetch a new insight
                                 Task {
-                                    await viewModel.saveInsight(insight, from: "daily_insight")
+                                    await viewModel.fetchDailyInsight()
                                 }
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.bordered)
+                            
+                            Spacer()
+                            
+                            if let insight = viewModel.dailyInsight {
+                                Button("Save for Later") {
+                                    // Save the insight
+                                    Task {
+                                        await viewModel.saveInsight(insight, from: "daily_insight")
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
                         }
                     }
-                }
-                .padding()
-                .background(Color(uiColor: .secondarySystemBackground))
-                .cornerRadius(16)
-                
-                // Quick Stats
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Quick Stats")
-                        .font(.title2)
-                        .fontWeight(.bold)
+                    .padding()
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(16)
                     
-                    Text("Your learning progress")
-                        .foregroundColor(.gray)
-                    
-                    VStack(spacing: 16) {
-                        HStack {
-                            Text("Total Insights")
-                            Spacer()
-                            Text("\(viewModel.savedInsights.count)")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                        }
+                    // Quick Stats
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Quick Stats")
+                            .font(.title2)
+                            .fontWeight(.bold)
                         
-                        HStack {
-                            Text("This Week")
-                            Spacer()
-                            Text("\(viewModel.savedInsights.filter { Calendar.current.isDate($0.savedAt, equalTo: Date(), toGranularity: .weekOfYear) }.count)")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                        }
+                        Text("Your learning progress")
+                            .foregroundColor(.gray)
                         
-                        HStack {
-                            Text("Learning Streak")
-                            Spacer()
-                            if let user = secondBrainViewModel.user {
-                                Text("\(user.currentStreak) days")
+                        VStack(spacing: 16) {
+                            HStack {
+                                Text("Total Insights")
+                                Spacer()
+                                Text("\(viewModel.savedInsights.count)")
                                     .font(.title2)
                                     .fontWeight(.bold)
-                            } else {
-                                Text("0 days")
+                            }
+                            
+                            HStack {
+                                Text("This Week")
+                                Spacer()
+                                Text("\(viewModel.savedInsights.filter { Calendar.current.isDate($0.savedAt, equalTo: Date(), toGranularity: .weekOfYear) }.count)")
                                     .font(.title2)
                                     .fontWeight(.bold)
+                            }
+                            
+                            HStack {
+                                Text("Learning Streak")
+                                Spacer()
+                                if let user = secondBrainViewModel.user {
+                                    Text("\(user.currentStreak) days")
+                                        .font(.title2)
+                                        .fontWeight(.bold)
+                                } else {
+                                    Text("0 days")
+                                        .font(.title2)
+                                        .fontWeight(.bold)
+                                }
+                            }
+                        }
+                        .padding()
+                    }
+                    .padding()
+                    .background(Color(uiColor: .systemBackground))
+                    .cornerRadius(12)
+                    
+                    // Category Filter
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            Button("All") {
+                                selectedCategory = "All"
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(selectedCategory == "All" ? .blue : .gray)
+                            
+                            ForEach(Array(viewModel.availableTags).sorted(), id: \.self) { category in
+                                Button(category) {
+                                    selectedCategory = category
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(selectedCategory == category ? .blue : .gray)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    // Saved Insights
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Saved Insights")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("Your personal collection of valuable content")
+                            .foregroundColor(.gray)
+                        
+                        if viewModel.isLoading {
+                            LoadingAnimation(message: "Loading saved insights...")
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                        } else if viewModel.savedInsights.isEmpty {
+                            Text("No saved insights yet")
+                                .foregroundColor(.gray)
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                        } else {
+                            LazyVStack(spacing: 16) {
+                                ForEach(viewModel.savedInsights.filter {
+                                    selectedCategory == "All" || $0.category == selectedCategory
+                                }) { insight in
+                                    InsightCard(insight: insight) {
+                                        Task {
+                                            await viewModel.deleteInsight(insight.id)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                     .padding()
                 }
                 .padding()
-                .background(Color(uiColor: .systemBackground))
-                .cornerRadius(12)
-                
-                // Category Filter
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        Button("All") {
-                            selectedCategory = "All"
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(selectedCategory == "All" ? .blue : .gray)
-                        
-                        ForEach(Array(viewModel.availableTags).sorted(), id: \.self) { category in
-                            Button(category) {
-                                selectedCategory = category
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(selectedCategory == category ? .blue : .gray)
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-                
-                // Saved Insights
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Saved Insights")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                    
-                    Text("Your personal collection of valuable content")
-                        .foregroundColor(.gray)
-                    
-                    if viewModel.isLoading {
-                        LoadingAnimation(message: "Loading saved insights...")
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                    } else if viewModel.savedInsights.isEmpty {
-                        Text("No saved insights yet")
-                            .foregroundColor(.gray)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                    } else {
-                        LazyVStack(spacing: 16) {
-                            ForEach(viewModel.savedInsights.filter {
-                                selectedCategory == "All" || $0.category == selectedCategory
-                            }) { insight in
-                                InsightCard(insight: insight) {
-                                    Task {
-                                        await viewModel.deleteInsight(insight.id)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding()
             }
-            .padding()
         }
         .task {
             await viewModel.fetchDailyInsight()

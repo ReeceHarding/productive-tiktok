@@ -40,14 +40,27 @@ struct ContentView: View {
 // MARK: - Loading View
 private struct LoadingView: View {
     var body: some View {
-        VStack(spacing: 20) {
-            ProgressView()
-                .progressViewStyle(CircularProgressViewStyle(tint: .blue))
-                .scaleEffect(1.5)
+        ZStack {
+            // Background gradient
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color.blue.opacity(0.3),
+                    Color.purple.opacity(0.3)
+                ]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
             
-            Text("Loading...")
-                .font(.headline)
-                .foregroundColor(.secondary)
+            VStack(spacing: 20) {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .blue))
+                    .scaleEffect(1.5)
+                
+                Text("Loading...")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+            }
         }
     }
 }

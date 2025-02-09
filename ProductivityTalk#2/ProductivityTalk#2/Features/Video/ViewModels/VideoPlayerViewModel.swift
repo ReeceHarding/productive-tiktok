@@ -8,6 +8,9 @@ import SwiftUI
 
 @MainActor
 public class VideoPlayerViewModel: ObservableObject {
+    // Static property to track currently playing video
+    private static var currentlyPlayingViewModel: VideoPlayerViewModel?
+    
     @Published public var video: Video
     @Published public var player: AVPlayer?
     @Published public var isLoading = false
@@ -17,11 +20,28 @@ public class VideoPlayerViewModel: ObservableObject {
     @Published public var isInSecondBrain = false
     @Published public var brainCount: Int = 0
     @Published public var showControls = true
+    @Published public var isPlaying = false
+    
+    // MARK: - Extended Playback & Loop
+    /// Tracks cumulative watch time across loops. If a video is 30 seconds long and user loops once, watchTime can reach 60, etc.
+    @Published public var watchTime: Double = 0.0
+    
+    /// The duration of the video as soon as the asset is loaded.
+    /// Helps us track how many times the user has effectively gone beyond 100%.
+    public var videoDuration: Double = 0.0
     
     private var observers: [NSKeyValueObservation] = []
+    private var timeObserverToken: Any?
     private var deinitHandler: (() -> Void)?
     private let firestore = Firestore.firestore()
     private var preloadedPlayers: [String: AVPlayer] = [:]
+    
+    // Used to ensure we don't double fade
+    private var fadeTask: Task<Void, Never>?
+    private var fadeInTask: Task<Void, Never>?
+    
+    // Additional concurrency
+    private var isCleaningUp = false
     
     public init(video: Video) {
         self.video = video
@@ -40,8 +60,12 @@ public class VideoPlayerViewModel: ObservableObject {
         // Capture the cleanup values in a closure that can be called from deinit
         let observersCopy = observers
         let playerCopy = player
-        deinitHandler = { [observersCopy, playerCopy] in
+        let timeObserverTokenCopy = timeObserverToken
+        deinitHandler = { [observersCopy, playerCopy, timeObserverTokenCopy] in
             observersCopy.forEach { $0.invalidate() }
+            if let token = timeObserverTokenCopy, let player = playerCopy {
+                player.removeTimeObserver(token)
+            }
             playerCopy?.pause()
             playerCopy?.replaceCurrentItem(with: nil)
         }
@@ -70,9 +94,20 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     private func cleanup() {
+        if isCleaningUp {
+            return
+        }
+        isCleaningUp = true
+        
         // Invalidate observers - this is thread-safe
         observers.forEach { $0.invalidate() }
         observers.removeAll()
+        
+        // Remove time observer
+        if let token = timeObserverToken, let player = player {
+            player.removeTimeObserver(token)
+            timeObserverToken = nil
+        }
         
         // Clean up player
         if let player = player {
@@ -80,6 +115,9 @@ public class VideoPlayerViewModel: ObservableObject {
             player.replaceCurrentItem(with: nil)
         }
         player = nil
+        isPlaying = false
+        
+        isCleaningUp = false
         LoggingService.debug("Cleaned up player resources", component: "Player")
     }
     
@@ -157,6 +195,17 @@ public class VideoPlayerViewModel: ObservableObject {
         player.automaticallyWaitsToMinimizeStalling = false
         player.currentItem?.preferredForwardBufferDuration = 10
         
+        // Add time observer for watchTime
+        addTimeObserver(to: player)
+        
+        // Add end of video observer for looping
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playerItemDidReachEnd),
+            name: .AVPlayerItemDidPlayToEndTime,
+            object: player.currentItem
+        )
+        
         LoggingService.video("✅ Player setup complete for \(video.id)", component: "Player")
         isLoading = false
     }
@@ -172,13 +221,11 @@ public class VideoPlayerViewModel: ObservableObject {
                 case .readyToPlay:
                     LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                     // Start buffering only when player is ready
-                    await Task { @MainActor in
-                        do {
-                            try await player.preroll(atRate: 1.0)
-                            LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
-                        } catch {
-                            LoggingService.error("Preroll failed for \(self.video.id): \(error.localizedDescription)", component: "Player")
-                        }
+                    do {
+                        try await player.preroll(atRate: 1.0)
+                        LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
+                    } catch {
+                        LoggingService.error("Preroll failed for \(self.video.id): \(error.localizedDescription)", component: "Player")
                     }
                 default:
                     break
@@ -186,6 +233,42 @@ public class VideoPlayerViewModel: ObservableObject {
             }
         }
         observers.append(statusObserver)
+    }
+    
+    private func addTimeObserver(to player: AVPlayer) {
+        // Remove existing observer if any
+        if let token = timeObserverToken {
+            player.removeTimeObserver(token)
+            timeObserverToken = nil
+        }
+        
+        // Create new observer that fires every 0.5 seconds
+        let interval = CMTimeMakeWithSeconds(0.5, preferredTimescale: 600)
+        let token = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] currentTime in
+            guard let self = self, !self.isCleaningUp else { return }
+            
+            // If playing, accumulate watchTime
+            if self.isPlaying {
+                self.watchTime += 0.5 // Add half a second since that's our interval
+                LoggingService.debug("[PlayerVM] watchTime = \(self.watchTime) (video: \(self.video.id))", component: "Player")
+            }
+        }
+        timeObserverToken = token
+    }
+    
+    @objc private func playerItemDidReachEnd() {
+        LoggingService.debug("🔄 Video reached end, initiating loop (video: \(video.id))", component: "Player")
+        guard let player = player else { return }
+        
+        // Seek to start
+        player.seek(to: .zero)
+        player.play()
+        isPlaying = true
+        
+        // Re-apply fade in if not muted
+        Task { @MainActor in
+            await fadeInAudio()
+        }
     }
     
     public func addToSecondBrain() async {
@@ -262,14 +345,79 @@ public class VideoPlayerViewModel: ObservableObject {
         }
     }
     
-    public func play() {
-        LoggingService.video("Playing video \(video.id)", component: "Player")
-        player?.play()
+    // MARK: - New Method: Pause Playback
+    /// Immediately pauses the AVPlayer and updates the isPlaying flag.
+    /// This method is used to ensure that offscreen players do not play audio.
+    public func pausePlayback() async {
+        LoggingService.debug("pausePlayback() called for video \(video.id)", component: "PlayerVM")
+        if let player = player {
+            // Fade out audio
+            let fadeTime = 0.3
+            let steps = 5
+            let volumeDecrement = player.volume / Float(steps)
+            for step in 0...steps {
+                try? await Task.sleep(nanoseconds: UInt64(fadeTime * 1_000_000_000 / Double(steps)))
+                player.volume = player.volume - volumeDecrement
+                LoggingService.debug("Fading out audio: step \(step) of \(steps), volume=\(player.volume)", component: "PlayerVM")
+            }
+            player.pause()
+        }
+        isPlaying = false
+        if VideoPlayerViewModel.currentlyPlayingViewModel === self {
+            VideoPlayerViewModel.currentlyPlayingViewModel = nil
+        }
+        LoggingService.debug("Player paused and isPlaying set to false for video \(video.id)", component: "PlayerVM")
     }
     
-    public func pause() {
-        LoggingService.video("Pausing video \(video.id)", component: "Player")
+    // MARK: - Enhanced Play Method
+    public func play() async {
+        LoggingService.debug("play() called for video \(video.id)", component: "PlayerVM")
+        
+        // If another video is currently playing, pause it first
+        if let currentlyPlaying = VideoPlayerViewModel.currentlyPlayingViewModel, currentlyPlaying !== self {
+            LoggingService.debug("Pausing currently playing video \(currentlyPlaying.video.id)", component: "PlayerVM")
+            await currentlyPlaying.pausePlayback()
+        }
+        
+        if player == nil {
+            LoggingService.debug("Player was nil, loading video first", component: "PlayerVM")
+            loadVideo()
+        }
+        
+        guard let player = player else {
+            LoggingService.error("Player still nil after loadVideo for \(video.id)", component: "PlayerVM")
+            return
+        }
+        
+        // Start with volume at 0 and fade in
+        player.volume = 0
+        player.play()
+        isPlaying = true
+        VideoPlayerViewModel.currentlyPlayingViewModel = self
+        
+        // Fade in audio
+        let fadeTime = 0.3
+        let steps = 5
+        let targetVolume: Float = 1.0
+        let volumeIncrement = targetVolume / Float(steps)
+        
+        for i in 0...steps {
+            try? await Task.sleep(nanoseconds: UInt64(fadeTime * 1_000_000_000 / Double(steps)))
+            player.volume = Float(i) * volumeIncrement
+            LoggingService.debug("Fading in audio: step \(i) of \(steps), volume=\(player.volume)", component: "PlayerVM")
+        }
+        
+        LoggingService.debug("✅ Play complete for video \(video.id)", component: "PlayerVM")
+    }
+    
+    public func pause() async {
+        LoggingService.video("⏸️ PAUSE requested for video \(video.id)", component: "Player")
+        LoggingService.video("Current player status: \(player?.status.rawValue ?? -1)", component: "Player")
+        LoggingService.video("Current time: \(player?.currentTime().seconds ?? 0)", component: "Player")
+        LoggingService.video("Is playing: \(player?.rate != 0)", component: "Player")
+        
         player?.pause()
+        LoggingService.video("✅ PAUSE command issued for video \(video.id)", component: "Player")
     }
     
     public func toggleControls() {
@@ -312,7 +460,19 @@ public class VideoPlayerViewModel: ObservableObject {
                 // Configure playback settings
                 player.automaticallyWaitsToMinimizeStalling = false
                 
-                // Start preloading
+                // Wait for player to be ready before prerolling
+                try await withCheckedThrowingContinuation { continuation in
+                    let observer = player.observe(\.status) { player, _ in
+                        if player.status == .readyToPlay {
+                            continuation.resume()
+                        } else if player.status == .failed {
+                            continuation.resume(throwing: player.error ?? NSError(domain: "AVPlayer", code: -1))
+                        }
+                    }
+                    self.observers.append(observer)
+                }
+                
+                // Now that player is ready, attempt preroll
                 try await player.preroll(atRate: 1.0)
                 
                 // Store in preloaded players
@@ -322,5 +482,44 @@ public class VideoPlayerViewModel: ObservableObject {
                 LoggingService.error("Failed to preload video \(video.id): \(error.localizedDescription)", component: "Player")
             }
         }
+    }
+    
+    // MARK: - Audio Fade
+    private func cancelFades() {
+        fadeTask?.cancel()
+        fadeInTask?.cancel()
+    }
+    
+    private func fadeOutAudio() async {
+        guard let player = player else { return }
+        cancelFades()
+        let steps = 5
+        let time = 0.3
+        let chunk = player.volume / Float(steps)
+        fadeTask = Task {
+            for _ in 0..<steps {
+                if Task.isCancelled { return }
+                try? await Task.sleep(nanoseconds: UInt64(time*1_000_000_000 / Double(steps)))
+                player.volume -= chunk
+            }
+        }
+        await fadeTask?.value
+    }
+    
+    private func fadeInAudio() async {
+        guard let player = player else { return }
+        cancelFades()
+        let steps = 5
+        let time = 0.3
+        player.volume = 0
+        fadeInTask = Task {
+            for i in 0...steps {
+                if Task.isCancelled { return }
+                try? await Task.sleep(nanoseconds: UInt64(time*1_000_000_000 / Double(steps)))
+                player.volume = Float(i) * (1.0 / Float(steps))
+                LoggingService.debug("Fading in audio: step \(i) of \(steps), volume=\(player.volume)", component: "PlayerVM")
+            }
+        }
+        await fadeInTask?.value
     }
 } 
