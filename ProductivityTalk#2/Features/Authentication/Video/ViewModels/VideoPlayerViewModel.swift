@@ -172,7 +172,7 @@ public class VideoPlayerViewModel: ObservableObject {
             "AVURLAssetPreferPreciseDurationAndTimingKey": false
         ])
         
-        await setupNewPlayer(with: asset)
+        try await setupNewPlayer(with: asset)
     }
     
     private func setupNewPlayer(with asset: AVAsset) async {
