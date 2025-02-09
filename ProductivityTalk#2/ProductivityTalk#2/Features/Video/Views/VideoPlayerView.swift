@@ -23,22 +23,29 @@ public struct VideoPlayerView: View {
         ZStack {
             if let player = viewModel.player {
                 VideoPlayer(player: player)
+                    .aspectRatio(contentMode: .fill)
                     .onAppear {
                         LoggingService.video("Video view appeared for \(video.id)", component: "Player")
                         isVisible = true
                         if !viewModel.isLoading {
-                            viewModel.play()
+                            Task {
+                                await viewModel.play()
+                            }
                         }
                     }
                     .onDisappear {
                         LoggingService.video("Video view disappeared for \(video.id)", component: "Player")
                         isVisible = false
-                        viewModel.pause()
+                        Task {
+                            await viewModel.pause()
+                        }
                     }
-                    .onChange(of: viewModel.isLoading) { isLoading in
+                    .onChange(of: viewModel.isLoading) { _, isLoading in
                         if !isLoading && isVisible {
                             LoggingService.video("Video loaded for \(video.id)", component: "Player")
-                            viewModel.play()
+                            Task {
+                                await viewModel.play()
+                            }
                         }
                     }
                     .ignoresSafeArea()
@@ -133,19 +140,23 @@ public struct VideoPlayerView: View {
                 viewModel.loadVideo()
             }
         }
-        .onChange(of: video.videoURL) { newURL in
+        .onChange(of: video.videoURL) { _, newURL in
             if !newURL.isEmpty {
                 viewModel.loadVideo()
             }
         }
-        .onChange(of: scenePhase) { newPhase in
+        .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
                 if isVisible {
-                    viewModel.play()
+                    Task {
+                        await viewModel.play()
+                    }
                 }
             case .inactive, .background:
-                viewModel.pause()
+                Task {
+                    await viewModel.pause()
+                }
             @unknown default:
                 break
             }
