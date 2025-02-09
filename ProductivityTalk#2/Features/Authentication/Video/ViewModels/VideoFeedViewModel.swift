@@ -27,7 +27,6 @@ public class VideoFeedViewModel: ObservableObject {
     
     public init() {
         preloadQueue.maxConcurrentOperationCount = 2
-        LoggingService.video("Initialized with preload window of \(preloadWindow)", component: "Feed")
     }
     
     deinit {

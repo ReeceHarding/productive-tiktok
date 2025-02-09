@@ -58,10 +58,10 @@ public class VideoPlayerViewModel: ObservableObject {
     // Additional concurrency
     private var isCleaningUp = false
     
-    public init(video: Video) {
+    public init(video: Video, preloadedPlayers: [String: AVPlayer] = [:]) {
         self.video = video
+        self.preloadedPlayers = preloadedPlayers
         self.brainCount = video.brainCount
-        LoggingService.video("Initialized player for video \(video.id)", component: "Player")
         
         // Check if video is in user's second brain
         Task {
@@ -149,19 +149,16 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     public func loadVideo() async {
-        LoggingService.video("Starting loadVideo for \(video.id)", component: "Player")
         isLoading = true
         
         // Check if we have a preloaded player first
         if let preloadedPlayer = preloadedPlayers[video.id] {
-            LoggingService.video("✅ Using preloaded player for \(video.id)", component: "Player")
             setupPlayer(preloadedPlayer)
             preloadedPlayers.removeValue(forKey: video.id)
             return
         }
         
         guard let url = URL(string: video.videoURL) else {
-            LoggingService.error("❌ Invalid URL for \(video.id)", component: "Player")
             isLoading = false
             return
         }
@@ -176,14 +173,11 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     private func setupNewPlayer(with asset: AVAsset) async {
-        LoggingService.video("Setting up new player for \(video.id)", component: "Player")
-        
         do {
             // Load essential properties
             let playable = try await asset.load(.isPlayable)
             
             guard playable else {
-                LoggingService.error("Asset not playable for \(video.id)", component: "Player")
                 await MainActor.run { isLoading = false }
                 return
             }
@@ -196,7 +190,6 @@ public class VideoPlayerViewModel: ObservableObject {
                 setupPlayer(player)
             }
         } catch {
-            LoggingService.error("Failed to setup player: \(error.localizedDescription)", component: "Player")
             await MainActor.run {
                 isLoading = false
             }
@@ -204,8 +197,6 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     private func setupPlayer(_ player: AVPlayer) {
-        LoggingService.video("Setting up player for \(video.id)", component: "Player")
-        
         // Clean up existing player first
         cleanup()
         
@@ -227,7 +218,6 @@ public class VideoPlayerViewModel: ObservableObject {
             object: player.currentItem
         )
         
-        LoggingService.video("✅ Player setup complete for \(video.id)", component: "Player")
         isLoading = false
     }
     
@@ -238,15 +228,11 @@ public class VideoPlayerViewModel: ObservableObject {
                 switch player.status {
                 case .failed:
                     self.error = player.error?.localizedDescription
-                    LoggingService.error("Player failed for \(self.video.id): \(player.error?.localizedDescription ?? "Unknown error")", component: "Player")
                 case .readyToPlay:
-                    LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                     // Start buffering only when player is ready
                     do {
                         if await player.preroll(atRate: 1.0) {
-                            LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
                         } else {
-                            LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
                         }
                     }
                 default:
@@ -278,12 +264,10 @@ public class VideoPlayerViewModel: ObservableObject {
     private func updateWatchTime() async {
         guard !isCleaningUp else { return }
         if isPlaying, let currentTime = player?.currentTime().seconds {
-            LoggingService.debug("[PlayerVM] watchTime = \(currentTime) (video: \(video.id))", component: "Player")
         }
     }
     
     @objc private func playerItemDidReachEnd() {
-        LoggingService.debug("🔄 Video reached end, initiating loop (video: \(video.id))", component: "Player")
         guard let player = player else { return }
         
         // Seek to start
@@ -575,10 +559,6 @@ public class VideoPlayerViewModel: ObservableObject {
     private func prerollIfNeeded() async {
         guard let player = player else { return }
         await player.preroll(atRate: 1.0)
-        
-        await MainActor.run {
-            LoggingService.video("Preroll complete for \(video.id)", component: "Player")
-        }
     }
     
     func toggleSecondBrain() async {

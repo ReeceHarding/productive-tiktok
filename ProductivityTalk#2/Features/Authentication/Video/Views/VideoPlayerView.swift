@@ -13,11 +13,11 @@ public struct VideoPlayerView: View {
     @State private var errorMessage: String?
     @State private var showError = false
     @State private var isVisible = false
+    @State private var showScheduling = false
     
     init(video: Video) {
         self.video = video
         self._viewModel = StateObject(wrappedValue: VideoPlayerViewModel(video: video))
-        LoggingService.video("Initializing VideoPlayerView for video: \(video.id)", component: "UI")
     }
     
     public var body: some View {
@@ -49,57 +49,75 @@ public struct VideoPlayerView: View {
             
             // Overlay for UI controls (shown when toggled)
             if viewModel.showControls {
-                VStack {
-                    Spacer()
-                    HStack {
+                GeometryReader { geometry in
+                    VStack {
                         Spacer()
-                        VStack(spacing: 20) {
-                            // Brain button
-                            Button {
-                                LoggingService.debug("Brain icon tapped for video: \(video.id)", component: "Player")
-                                Task {
-                                    do {
-                                        try await viewModel.addToSecondBrain()
-                                    } catch {
-                                        print("Error adding to second brain: \(error)")
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 20) {
+                                // Brain button
+                                Button {
+                                    Task {
+                                        do {
+                                            try await viewModel.addToSecondBrain()
+                                        } catch {
+                                            print("Error adding to second brain: \(error)")
+                                        }
+                                    }
+                                } label: {
+                                    VStack(spacing: 4) {
+                                        Image(systemName: viewModel.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
+                                            .font(.system(size: 32))
+                                            .foregroundColor(viewModel.isInSecondBrain ? .blue : .white)
+                                            .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                        
+                                        Text("\(viewModel.brainCount)")
+                                            .font(.caption)
+                                            .foregroundColor(.white)
+                                            .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
                                     }
                                 }
-                            } label: {
-                                VStack(spacing: 4) {
-                                    Image(systemName: viewModel.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
-                                        .font(.system(size: 32))
-                                        .foregroundColor(viewModel.isInSecondBrain ? .blue : .white)
-                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
-                                    
-                                    Text("\(viewModel.brainCount)")
-                                        .font(.caption)
-                                        .foregroundColor(.white)
-                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                .buttonStyle(ScaleButtonStyle())
+                                
+                                // Comment Button
+                                Button {
+                                    showComments = true
+                                } label: {
+                                    VStack(spacing: 4) {
+                                        Image(systemName: "bubble.left")
+                                            .font(.system(size: 32))
+                                            .foregroundColor(.white)
+                                            .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                        
+                                        Text("\(video.commentCount)")
+                                            .font(.caption)
+                                            .foregroundColor(.white)
+                                            .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                    }
                                 }
-                            }
-                            .buttonStyle(ScaleButtonStyle())
-                            
-                            // Comment Button
-                            Button {
-                                LoggingService.debug("Comment icon tapped for video: \(video.id)", component: "Player")
-                                showComments = true
-                            } label: {
-                                VStack(spacing: 4) {
-                                    Image(systemName: "bubble.left")
-                                        .font(.system(size: 32))
-                                        .foregroundColor(.white)
-                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
-                                    
-                                    Text("\(video.commentCount)")
-                                        .font(.caption)
-                                        .foregroundColor(.white)
-                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                .buttonStyle(ScaleButtonStyle())
+                                
+                                // Calendar button
+                                Button {
+                                    showScheduling = true
+                                } label: {
+                                    VStack(spacing: 4) {
+                                        Image(systemName: "calendar.badge.plus")
+                                            .font(.system(size: 32))
+                                            .foregroundColor(.white)
+                                            .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                        
+                                        Text("Schedule")
+                                            .font(.caption)
+                                            .foregroundColor(.white)
+                                            .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                    }
                                 }
+                                .buttonStyle(ScaleButtonStyle())
                             }
-                            .buttonStyle(ScaleButtonStyle())
+                            .padding(.trailing, 16)
+                            .padding(.bottom, geometry.safeAreaInsets.bottom + 80)
                         }
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 16)
                     }
                 }
                 .transition(.opacity)
@@ -112,16 +130,12 @@ public struct VideoPlayerView: View {
         }
         .background(Color.black)
         .onAppear {
-            LoggingService.video("Video view appeared for \(video.id)", component: "Player")
             isVisible = true
-            if !viewModel.isLoading {
-                Task {
-                    await viewModel.play()
-                }
+            Task {
+                await viewModel.loadVideo()
             }
         }
         .onDisappear {
-            LoggingService.video("Video view disappeared for \(video.id)", component: "Player")
             isVisible = false
             Task {
                 await viewModel.pause()
@@ -188,6 +202,13 @@ public struct VideoPlayerView: View {
             CommentsView(video: video)
                 .presentationDragIndicator(.visible)
                 .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showScheduling) {
+            if let transcript = video.transcript {
+                LLMSchedulingFlowView(transcript: transcript)
+            } else {
+                LLMSchedulingFlowView(transcript: video.description)
+            }
         }
     }
 } 
