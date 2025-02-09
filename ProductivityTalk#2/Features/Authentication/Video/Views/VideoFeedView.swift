@@ -1,6 +1,5 @@
 import SwiftUI
 import AVKit
-import UIKit
 
 struct VideoFeedView: View {
     @StateObject private var viewModel = VideoFeedViewModel()
@@ -10,7 +9,7 @@ struct VideoFeedView: View {
     
     var body: some View {
         GeometryReader { geometry in
-            let screenHeight = UIScreen.main.bounds.height
+            let screenHeight = geometry.size.height
             
             ZStack {
                 // Match the gradient from SignUpView
