@@ -266,7 +266,7 @@ public class VideoPlayerViewModel: ObservableObject {
                 case .readyToPlay:
                     LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                     // Start buffering only when player is ready
-                    await player.preroll(atRate: 1.0) // Remove try since preroll() doesn't throw
+                    await player.preroll(atRate: 1.0)
                     LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
                 default:
                     break
@@ -313,7 +313,7 @@ public class VideoPlayerViewModel: ObservableObject {
         
         // Re-apply fade in if not muted
         Task { @MainActor in
-            try? await fadeInAudio()
+            await fadeInAudio()
         }
     }
     
@@ -592,7 +592,27 @@ public class VideoPlayerViewModel: ObservableObject {
             LoggingService.video("Updating video data for \(videoId)", component: "Player")
         }
         let firestore = Firestore.firestore()
-        try await firestore.collection("videos").document(videoId).updateData(data)
+        
+        // Convert to Sendable dictionary type
+        let sendableData = Dictionary(uniqueKeysWithValues: data.map { key, value in
+            if let fieldValue = value as? FieldValue {
+                return (key, fieldValue as Any)
+            } else if let intValue = value as? Int {
+                return (key, intValue as Any)
+            } else if let doubleValue = value as? Double {
+                return (key, doubleValue as Any)
+            } else if let stringValue = value as? String {
+                return (key, stringValue as Any)
+            } else if let boolValue = value as? Bool {
+                return (key, boolValue as Any)
+            } else if let timestampValue = value as? Date {
+                return (key, timestampValue as Any)
+            } else {
+                return (key, value)
+            }
+        })
+        
+        try await firestore.collection("videos").document(videoId).updateData(sendableData)
     }
     
     private func handlePlaybackError(_ error: Error) {

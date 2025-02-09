@@ -62,7 +62,11 @@ public struct VideoPlayerView: View {
                                 Button {
                                     LoggingService.debug("Brain icon tapped for video: \(video.id)", component: "Player")
                                     Task {
-                                        await viewModel.addToSecondBrain()
+                                        do {
+                                            try await viewModel.addToSecondBrain()
+                                        } catch {
+                                            print("Error adding to second brain: \(error)")
+                                        }
                                     }
                                 } label: {
                                     VStack(spacing: 4) {
@@ -148,7 +152,11 @@ public struct VideoPlayerView: View {
             )
             .onTapGesture(count: 2) { 
                 Task {
-                    await viewModel.addToSecondBrain()
+                    do {
+                        try await viewModel.addToSecondBrain()
+                    } catch {
+                        print("Error adding to second brain: \(error)")
+                    }
                 }
             }
             .task {

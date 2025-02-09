@@ -1,3 +1,4 @@
+@preconcurrency
 import AVFoundation
 
 /// Asynchronous extension for AVAsset that loads specified keys before further processing.
@@ -9,38 +10,55 @@ extension AVAsset {
     /// Loads the specified keys asynchronously and returns when they are ready to use
     /// - Parameter keys: The keys to load
     /// - Returns: Void if successful, throws an error if loading fails
-    func loadValuesAsync(keys: [String]) async throws {
-        print("Loading keys asynchronously: \(keys)")
-        
-        return try await withCheckedThrowingContinuation { continuation in
-            print("Using continuation-based approach for key loading")
-            
-            self.loadValuesAsynchronously(forKeys: keys) { [weak self] in
-                guard let self = self else {
-                    continuation.resume(throwing: NSError(domain: "AVAssetError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Self was deallocated"]))
-                    return
+    func loadValuesAsync(forKeys keys: [String]) async throws {
+        if #available(iOS 16.0, *) {
+            // Use new API for iOS 16+
+            for key in keys {
+                switch key {
+                case "duration":
+                    _ = try await load(.duration)
+                case "tracks":
+                    _ = try await load(.tracks)
+                case "playable":
+                    _ = try await load(.isPlayable)
+                default:
+                    // For other keys, fall back to the old API
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                        loadValuesAsynchronously(forKeys: [key]) { [weak self] in
+                            guard let self = self else {
+                                continuation.resume(throwing: NSError(domain: "AVAsset", code: -1))
+                                return
+                            }
+                            var error: NSError?
+                            let status = self.statusOfValue(forKey: key, error: &error)
+                            if status == .failed {
+                                continuation.resume(throwing: error ?? NSError(domain: "AVAsset", code: -1))
+                            } else {
+                                continuation.resume()
+                            }
+                        }
+                    }
                 }
-                
-                var error: NSError?
-                for key in keys {
-                    let status = self.statusOfValue(forKey: key, error: &error)
-                    print("Status for key \(key): \(status.rawValue)")
+            }
+        } else {
+            // Fallback for older iOS versions
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                self.loadValuesAsynchronously(forKeys: keys) { [weak self] in
+                    guard let self = self else {
+                        continuation.resume(throwing: NSError(domain: "AVAsset", code: -1, userInfo: [NSLocalizedDescriptionKey: "Asset was deallocated"]))
+                        return
+                    }
                     
-                    if status == .failed {
-                        print("Failed to load key: \(key), error: \(String(describing: error))")
-                        continuation.resume(throwing: error ?? NSError(domain: "AVAssetError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load key: \(key)"]))
-                        return
+                    var error: NSError?
+                    for key in keys {
+                        let status = self.statusOfValue(forKey: key, error: &error)
+                        if status == .failed {
+                            continuation.resume(throwing: error ?? NSError(domain: "AVAsset", code: -1))
+                            return
+                        }
                     }
-                    if status != .loaded {
-                        print("Unexpected status for key: \(key), status: \(status)")
-                        continuation.resume(throwing: NSError(domain: "AVAssetError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unexpected status for key: \(key)"]))
-                        return
-                    }
-                    print("Successfully loaded key: \(key)")
+                    continuation.resume()
                 }
-                
-                print("Successfully loaded all keys")
-                continuation.resume(returning: ())
             }
         }
     }

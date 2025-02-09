@@ -1,6 +1,8 @@
 import SwiftUI
 import AVKit
-@_implementationOnly import ProductivityTalk_2
+import UIKit
+import Core.Components
+import Core.Services
 
 struct VideoFeedView: View {
     @StateObject private var viewModel = VideoFeedViewModel()
@@ -84,7 +86,11 @@ struct VideoFeedView: View {
                             Button {
                                 if let videoId = scrollPosition {
                                     Task {
-                                        await viewModel.playerViewModels[videoId]?.addToSecondBrain()
+                                        do {
+                                            try await viewModel.playerViewModels[videoId]?.addToSecondBrain()
+                                        } catch {
+                                            print("Error adding to second brain: \(error)")
+                                        }
                                     }
                                 }
                             } label: {

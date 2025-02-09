@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 import AVKit
 
+@MainActor
 struct VideoUploadView: View {
     @StateObject private var viewModel: VideoUploadViewModel
     @Environment(\.dismiss) private var dismiss
@@ -34,22 +35,23 @@ struct VideoUploadView: View {
                                 matching: .videos,
                                 photoLibrary: .shared()
                             ) {
+                                let isEmpty = viewModel.uploadStates.isEmpty
                                 VStack(spacing: 12) {
                                     Image(systemName: "video.badge.plus")
                                         .font(.system(size: 40))
                                         .foregroundColor(.blue)
                                     
-                                    Text(viewModel.uploadStates.isEmpty ? "Click to Upload Videos" : "Add More Videos")
+                                    Text(isEmpty ? "Click to Upload Videos" : "Add More Videos")
                                         .font(.headline)
                                     
-                                    if viewModel.uploadStates.isEmpty {
+                                    if isEmpty {
                                         Text("Select one or more videos")
                                             .font(.subheadline)
                                             .foregroundColor(.secondary)
                                     }
                                 }
                                 .frame(maxWidth: .infinity)
-                                .frame(height: viewModel.uploadStates.isEmpty ? 200 : 100)
+                                .frame(height: isEmpty ? 200 : 100)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12)
                                         .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [10]))
@@ -66,9 +68,10 @@ struct VideoUploadView: View {
                             }
                             
                             // Upload Progress List
-                            if !viewModel.uploadStates.isEmpty {
-                                ForEach(Array(viewModel.uploadStates.keys), id: \.self) { id in
-                                    if let state = viewModel.uploadStates[id] {
+                            let states = viewModel.uploadStates
+                            if !states.isEmpty {
+                                ForEach(Array(states.keys), id: \.self) { id in
+                                    if let state = states[id] {
                                         HStack(spacing: 16) {
                                             // Thumbnail or placeholder
                                             if let thumbnail = state.thumbnailImage {
