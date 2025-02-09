@@ -486,7 +486,7 @@ public class VideoPlayerViewModel: ObservableObject {
                 }
                 
                 // Now that player is ready, attempt preroll
-                try await player.preroll(atRate: 1.0)
+                await player.preroll(atRate: 1.0)
                 
                 // Store in preloaded players
                 preloadedPlayers[video.id] = player
@@ -560,10 +560,10 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     private func updateSecondBrainStatus() async throws {
-        let data: [AnyHashable: Any] = [
-            "isInSecondBrain": isInSecondBrain
-        ] as [AnyHashable: Any]
-        try await firestore.collection("videos").document(video.id).updateData(data)
+        let data: [String: SendableValue] = [
+            "isInSecondBrain": .bool(isInSecondBrain)
+        ]
+        try await firestore.collection("videos").document(video.id).updateData(data.asDictionary)
     }
     
     private func prerollIfNeeded() async {

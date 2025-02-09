@@ -30,12 +30,12 @@ struct VideoUploadView: View {
                     ScrollView {
                         VStack(spacing: 20) {
                             // Upload Button
+                            let isEmpty = viewModel.uploadStates.isEmpty
                             PhotosPicker(
                                 selection: $viewModel.selectedItems,
                                 matching: .videos,
                                 photoLibrary: .shared()
                             ) {
-                                let isEmpty = viewModel.uploadStates.isEmpty
                                 VStack(spacing: 12) {
                                     Image(systemName: "video.badge.plus")
                                         .font(.system(size: 40))

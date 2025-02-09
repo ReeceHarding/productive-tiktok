@@ -199,19 +199,15 @@ public class VideoFeedViewModel: ObservableObject {
         let preloadTask = Task.detached(priority: .background) { [weak self] in
             guard let self = self else { return }
             
-            do {
-                // Get the player view model for this video
-                guard let playerViewModel = await MainActor.run(body: { self.playerViewModels[video.id] }) else {
-                    return
-                }
-                
-                // Preload the video in the background
-                await playerViewModel.preloadVideo(video)
-                
-                LoggingService.success("Successfully preloaded video at index \(index)", component: "Feed")
-            } catch {
-                LoggingService.error("Failed to preload video at index \(index): \(error.localizedDescription)", component: "Feed")
+            // Get the player view model for this video
+            guard let playerViewModel = await MainActor.run(body: { self.playerViewModels[video.id] }) else {
+                return
             }
+            
+            // Preload the video in the background
+            await playerViewModel.preloadVideo(video)
+            
+            LoggingService.success("Successfully preloaded video at index \(index)", component: "Feed")
         }
         
         preloadTasks[video.id] = preloadTask

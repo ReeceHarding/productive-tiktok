@@ -21,40 +21,41 @@ extension AVAsset {
                     _ = try await load(.tracks)
                 case "playable":
                     _ = try await load(.isPlayable)
+                case "preferredTransform":
+                    _ = try await load(.preferredTransform)
                 default:
-                    // For other keys, fall back to the old API
-                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                        loadValuesAsynchronously(forKeys: [key]) { [weak self] in
-                            guard let self = self else {
-                                continuation.resume(throwing: NSError(domain: "AVAsset", code: -1))
-                                return
-                            }
-                            var error: NSError?
-                            let status = self.statusOfValue(forKey: key, error: &error)
-                            if status == .failed {
-                                continuation.resume(throwing: error ?? NSError(domain: "AVAsset", code: -1))
-                            } else {
-                                continuation.resume()
-                            }
+                    // For any other keys, use synchronous loading since they don't have AVAsyncProperty equivalents
+                    var error: NSError?
+                    let status = statusOfValue(forKey: key, error: &error)
+                    if status != .loaded {
+                        if let error = error {
+                            throw error
+                        } else {
+                            throw NSError(domain: "AVAsset", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load key: \(key)"])
                         }
                     }
                 }
             }
         } else {
-            // Fallback for older iOS versions
-            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                self.loadValuesAsynchronously(forKeys: keys) { [weak self] in
+            // Fallback for iOS 15
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                loadValuesAsynchronously(forKeys: keys) { [weak self] in
                     guard let self = self else {
-                        continuation.resume(throwing: NSError(domain: "AVAsset", code: -1, userInfo: [NSLocalizedDescriptionKey: "Asset was deallocated"]))
+                        continuation.resume(throwing: NSError(domain: "AVAsset", code: -1, userInfo: [NSLocalizedDescriptionKey: "Self was deallocated"]))
                         return
                     }
                     
                     var error: NSError?
                     for key in keys {
                         let status = self.statusOfValue(forKey: key, error: &error)
-                        if status == .failed {
-                            continuation.resume(throwing: error ?? NSError(domain: "AVAsset", code: -1))
-                            return
+                        if status != .loaded {
+                            if let error = error {
+                                continuation.resume(throwing: error)
+                                return
+                            } else {
+                                continuation.resume(throwing: NSError(domain: "AVAsset", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load key: \(key)"]))
+                                return
+                            }
                         }
                     }
                     continuation.resume()
