@@ -452,6 +452,8 @@
 				DEVELOPMENT_TEAM = 7T46S6WCV4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "ProductivityTalk-2-Info.plist";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "We need access to your calendar to schedule events based on video content and reminders";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to record videos for upload";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to record audio with your videos";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to select videos for upload";
@@ -484,6 +486,8 @@
 				DEVELOPMENT_TEAM = 7T46S6WCV4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "ProductivityTalk-2-Info.plist";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "We need access to your calendar to schedule events based on video content and reminders";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to record videos for upload";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to record audio with your videos";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to select videos for upload";

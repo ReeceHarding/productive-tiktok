@@ -1,4 +1,8 @@
 import SwiftUI
+import EventKit
+
+@_exported import class EventKit.EKEventStore
+@_exported import class EventKit.EKEvent
 
 public struct LLMSchedulingFlowView: View {
     let transcript: String
@@ -147,6 +151,15 @@ public struct LLMSchedulingFlowView: View {
             }
             .navigationTitle("Schedule Event")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                Task {
+                    do {
+                        try await viewModel.requestCalendarAccess()
+                    } catch {
+                        viewModel.errorMessage = error.localizedDescription
+                    }
+                }
+            }
         }
     }
 }

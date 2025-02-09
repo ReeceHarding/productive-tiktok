@@ -8,6 +8,8 @@
 	<string>454269517695</string>
 	<key>PLIST_VERSION</key>
 	<string>1</string>
+	<key>NSCameraReactionEffectGesturesEnabledDefault</key>
+	<false/>
 	<key>BUNDLE_ID</key>
 	<string>com.eus.teacheditai5.ProductivityTalk-2</string>
 	<key>PROJECT_ID</key>
@@ -15,15 +17,15 @@
 	<key>STORAGE_BUCKET</key>
 	<string>new-productivity-talk.firebasestorage.app</string>
 	<key>IS_ADS_ENABLED</key>
-	<false></false>
+	<false/>
 	<key>IS_ANALYTICS_ENABLED</key>
-	<false></false>
+	<false/>
 	<key>IS_APPINVITE_ENABLED</key>
-	<true></true>
+	<true/>
 	<key>IS_GCM_ENABLED</key>
-	<true></true>
+	<true/>
 	<key>IS_SIGNIN_ENABLED</key>
-	<true></true>
+	<true/>
 	<key>GOOGLE_APP_ID</key>
 	<string>1:454269517695:ios:699305c5944d7c9b2d644a</string>
 </dict>

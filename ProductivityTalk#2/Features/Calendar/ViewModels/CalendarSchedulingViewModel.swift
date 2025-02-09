@@ -30,6 +30,12 @@ public class CalendarSchedulingViewModel: ObservableObject {
     public init(transcript: String) {
         self.transcript = transcript
         LoggingService.debug("CalendarSchedulingViewModel initialized with transcript length: \(transcript.count) chars", component: "CalendarSchedulingVM")
+        
+        // Add calendar authorization status check
+        Task {
+            let status = EKEventStore.authorizationStatus(for: .event)
+            LoggingService.debug("📅 Calendar authorization status: \(status.rawValue)", component: "CalendarSchedulingVM")
+        }
     }
     
     // 1. Request Calendar Permission for EventKit
@@ -128,25 +134,35 @@ public class CalendarSchedulingViewModel: ObservableObject {
     
     // 4. Create an event in the local Apple calendar
     public func createLocalCalendarEvent() async throws {
-        LoggingService.debug("Creating local Apple Calendar event using EventKit", component: "CalendarSchedulingVM")
+        LoggingService.debug("📅 Creating local Apple Calendar event using EventKit", component: "CalendarSchedulingVM")
+        
+        // Check calendar authorization first
+        let authStatus = EKEventStore.authorizationStatus(for: .event)
+        LoggingService.debug("📅 Current calendar authorization status: \(authStatus.rawValue)", component: "CalendarSchedulingVM")
+        
         guard let start = scheduledStart, let end = scheduledEnd else {
+            LoggingService.error("📅 No valid scheduling time found", component: "CalendarSchedulingVM")
             throw NSError(domain: "Calendar", code: -1, userInfo: [NSLocalizedDescriptionKey: "No valid scheduling time found"])
         }
+        
+        LoggingService.debug("📅 Attempting to create event from \(start) to \(end)", component: "CalendarSchedulingVM")
         
         // Get the default calendar for new events
         let calendar: EKCalendar
         if let defaultCalendar = eventStore.defaultCalendarForNewEvents {
             calendar = defaultCalendar
-            LoggingService.debug("Using default calendar", component: "CalendarSchedulingVM")
+            LoggingService.debug("📅 Using default calendar: \(calendar.title)", component: "CalendarSchedulingVM")
         } else {
             // If no default calendar, try to get the first available calendar
             let calendars = eventStore.calendars(for: .event)
+            LoggingService.debug("📅 Available calendars: \(calendars.map { $0.title })", component: "CalendarSchedulingVM")
+            
             guard let firstCalendar = calendars.first else {
-                LoggingService.error("No available calendars found", component: "CalendarSchedulingVM")
+                LoggingService.error("📅 No available calendars found", component: "CalendarSchedulingVM")
                 throw NSError(domain: "Calendar", code: -1, userInfo: [NSLocalizedDescriptionKey: "No available calendars found"])
             }
             calendar = firstCalendar
-            LoggingService.warning("No default calendar found, using first available calendar", component: "CalendarSchedulingVM")
+            LoggingService.warning("📅 No default calendar found, using first available: \(calendar.title)", component: "CalendarSchedulingVM")
         }
         
         let event = EKEvent(eventStore: eventStore)
