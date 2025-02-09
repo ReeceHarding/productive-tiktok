@@ -24,15 +24,21 @@ extension AVAsset {
                 case "preferredTransform":
                     _ = try await load(.preferredTransform)
                 default:
-                    // For any other keys, use synchronous loading since they don't have AVAsyncProperty equivalents
+                    // For keys that don't have AVAsyncProperty equivalents,
+                    // we need to fall back to the older API even in iOS 16+
                     var error: NSError?
-                    let status = statusOfValue(forKey: key, error: &error)
-                    if status != .loaded {
-                        if let error = error {
-                            throw error
-                        } else {
-                            throw NSError(domain: "AVAsset", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load key: \(key)"])
+                    let status = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AVKeyValueStatus, Error>) in
+                        DispatchQueue.global().async {
+                            let status = self.statusOfValue(forKey: key, error: &error)
+                            if let error = error {
+                                continuation.resume(throwing: error)
+                            } else {
+                                continuation.resume(returning: status)
+                            }
                         }
+                    }
+                    if status != .loaded {
+                        throw NSError(domain: "AVAsset", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load key: \(key)"])
                     }
                 }
             }
