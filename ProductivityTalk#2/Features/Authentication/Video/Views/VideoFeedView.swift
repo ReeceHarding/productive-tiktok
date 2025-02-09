@@ -1,8 +1,6 @@
 import SwiftUI
 import AVKit
 import UIKit
-import Core.Components
-import Core.Services
 
 struct VideoFeedView: View {
     @StateObject private var viewModel = VideoFeedViewModel()
