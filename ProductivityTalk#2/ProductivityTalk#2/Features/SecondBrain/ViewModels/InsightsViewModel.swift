@@ -57,26 +57,28 @@ class InsightsViewModel: ObservableObject {
         }
     }
     
+    private func isValidQuote(_ quote: String) -> Bool {
+        // Filter out placeholder messages about short transcripts
+        let invalidPhrases = [
+            "as the provided transcript is too short",
+            "the transcript is too short",
+            "transcript is too short",
+            "not enough content to extract quotes"
+        ]
+        
+        let lowercasedQuote = quote.lowercased()
+        return !invalidPhrases.contains { lowercasedQuote.contains($0.lowercased()) }
+    }
+    
     func fetchDailyInsight() async {
-        print("\n🎯 InsightsViewModel: Starting daily insight fetch")
         guard let userId = AuthenticationManager.shared.currentUser?.uid else {
-            print("❌ InsightsViewModel: No user ID found - Authentication required")
+            print("❌ InsightsViewModel: No authenticated user")
             self.error = "Please sign in to view insights"
             return
         }
-        print("👤 InsightsViewModel: User authenticated - ID: \(userId)")
-        
-        // Check if we already have a daily insight from today
-        if let lastUpdate = UserDefaults.standard.object(forKey: lastInsightUpdateKey) as? Date {
-            print("📅 InsightsViewModel: Found last update: \(lastUpdate)")
-            if Calendar.current.isDateInToday(lastUpdate) {
-                print("✨ InsightsViewModel: Already have today's insight, skipping fetch")
-                return
-            }
-        }
         
         isLoading = true
-        print("🔍 InsightsViewModel: Fetching daily insight for user: \(userId)")
+        print("🔄 InsightsViewModel: Fetching daily insight")
         
         do {
             print("📚 InsightsViewModel: Querying Firestore path: users/\(userId)/secondBrain")
@@ -88,7 +90,7 @@ class InsightsViewModel: ObservableObject {
             print("📊 InsightsViewModel: Query results:")
             print("   - Total documents: \(snapshot.documents.count)")
             
-            // Collect all quotes
+            // Collect all valid quotes
             var allQuotes: [(quote: String, videoId: String)] = []
             for doc in snapshot.documents {
                 LoggingService.debug("🔄 Processing document: \(doc.documentID)", component: "Insights")
@@ -96,14 +98,15 @@ class InsightsViewModel: ObservableObject {
                 LoggingService.debug("📄 Document data: \(data)", component: "Insights")
                 
                 // Try to get quotes from either field
-                var quotes: [String]? = data["quotes"] as? [String]
+                var quotes: [String]? = (data["quotes"] as? [String])?.filter(isValidQuote)
                 if let quotes = quotes, !quotes.isEmpty {
-                    LoggingService.debug("📝 Found quotes in 'quotes' field for document \(doc.documentID): \(quotes)", component: "Insights")
-                } else if let extractedQuotes = data["extractedQuotes"] as? [String], !extractedQuotes.isEmpty {
-                    LoggingService.debug("📝 Found quotes in 'extractedQuotes' field for document \(doc.documentID): \(extractedQuotes)", component: "Insights")
+                    LoggingService.debug("📝 Found valid quotes in 'quotes' field for document \(doc.documentID): \(quotes)", component: "Insights")
+                } else if let extractedQuotes = (data["extractedQuotes"] as? [String])?.filter(isValidQuote),
+                          !extractedQuotes.isEmpty {
+                    LoggingService.debug("📝 Found valid quotes in 'extractedQuotes' field for document \(doc.documentID): \(extractedQuotes)", component: "Insights")
                     quotes = extractedQuotes
                 } else {
-                    LoggingService.warning("⚠️ No quotes found in document \(doc.documentID)", component: "Insights")
+                    LoggingService.warning("⚠️ No valid quotes found in document \(doc.documentID)", component: "Insights")
                 }
                 
                 if let validQuotes = quotes, !validQuotes.isEmpty, let videoId = data["videoId"] as? String {
@@ -114,7 +117,7 @@ class InsightsViewModel: ObservableObject {
             }
             
             print("\n📝 InsightsViewModel: Collection Summary")
-            print("   - Total quotes collected: \(allQuotes.count)")
+            print("   - Total valid quotes collected: \(allQuotes.count)")
             
             // Select a random quote
             if let randomQuote = allQuotes.randomElement() {
@@ -127,7 +130,7 @@ class InsightsViewModel: ObservableObject {
                 
                 print("💾 InsightsViewModel: Cached new daily insight")
             } else {
-                print("❌ InsightsViewModel: No quotes available to select from")
+                print("❌ InsightsViewModel: No valid quotes available to select from")
                 self.error = "No insights available yet"
             }
         } catch {

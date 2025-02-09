@@ -19,6 +19,7 @@ public struct Video: Identifiable, Codable {
     public var likeCount: Int
     public var saveCount: Int
     public var commentCount: Int
+    public var brainCount: Int
     public var processingStatus: VideoProcessingStatus
     public var transcript: String?
     public var extractedQuotes: [String]?
@@ -43,6 +44,7 @@ public struct Video: Identifiable, Codable {
         case likeCount
         case saveCount
         case commentCount
+        case brainCount
         case ownerUsername
         case ownerProfilePicURL
         case processingStatus
@@ -89,6 +91,7 @@ public struct Video: Identifiable, Codable {
         self.likeCount = (data["likeCount"] as? Int) ?? 0
         self.saveCount = (data["saveCount"] as? Int) ?? 0
         self.commentCount = (data["commentCount"] as? Int) ?? 0
+        self.brainCount = (data["brainCount"] as? Int) ?? 0
         self.ownerUsername = ownerUsername
         self.ownerProfilePicURL = data["ownerProfilePicURL"] as? String
         self.processingStatus = processingStatus
@@ -136,6 +139,7 @@ public struct Video: Identifiable, Codable {
         self.likeCount = 0
         self.saveCount = 0
         self.commentCount = 0
+        self.brainCount = 0
         self.ownerUsername = ownerUsername
         self.ownerProfilePicURL = ownerProfilePicURL
         self.processingStatus = .uploading
@@ -162,6 +166,7 @@ public struct Video: Identifiable, Codable {
             "likeCount": likeCount,
             "saveCount": saveCount,
             "commentCount": commentCount,
+            "brainCount": brainCount,
             "ownerUsername": ownerUsername,
             "processingStatus": processingStatus.rawValue
         ]

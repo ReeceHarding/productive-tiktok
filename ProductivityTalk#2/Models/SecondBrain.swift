@@ -102,6 +102,10 @@ public struct SecondBrain: Identifiable, Codable {
         self.videoThumbnailURL = videoThumbnailURL
         
         LoggingService.success("✅ SecondBrain: Created new entry with ID: \(id)", component: "SecondBrain")
+        LoggingService.debug("📊 SecondBrain Entry Details:", component: "SecondBrain")
+        LoggingService.debug("   - Quotes Count: \(quotes.count)", component: "SecondBrain")
+        LoggingService.debug("   - Quotes Content: \(quotes)", component: "SecondBrain")
+        LoggingService.debug("   - Video Title: \(videoTitle ?? "Not Set")", component: "SecondBrain")
     }
     
     // Convert to Firestore data
