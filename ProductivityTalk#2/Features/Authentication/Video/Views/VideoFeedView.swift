@@ -1,6 +1,5 @@
 import SwiftUI
 import AVKit
-@_implementationOnly import ProductivityTalk_2
 
 struct VideoFeedView: View {
     @StateObject private var viewModel = VideoFeedViewModel()
