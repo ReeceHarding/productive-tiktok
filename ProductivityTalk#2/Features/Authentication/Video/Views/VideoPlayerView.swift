@@ -62,11 +62,7 @@ public struct VideoPlayerView: View {
                                 Button {
                                     LoggingService.debug("Brain icon tapped for video: \(video.id)", component: "Player")
                                     Task {
-                                        do {
-                                            try await viewModel.addToSecondBrain()
-                                        } catch {
-                                            LoggingService.error("Failed to add to second brain: \(error.localizedDescription)", component: "Player")
-                                        }
+                                        await viewModel.addToSecondBrain()
                                     }
                                 } label: {
                                     VStack(spacing: 4) {
@@ -152,11 +148,7 @@ public struct VideoPlayerView: View {
             )
             .onTapGesture(count: 2) { 
                 Task {
-                    do {
-                        try await viewModel.addToSecondBrain()
-                    } catch {
-                        LoggingService.error("Failed to add to second brain: \(error.localizedDescription)", component: "Player")
-                    }
+                    await viewModel.addToSecondBrain()
                 }
             }
             .task {

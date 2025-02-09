@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+@_implementationOnly import ProductivityTalk_2
 
 struct VideoFeedView: View {
     @StateObject private var viewModel = VideoFeedViewModel()
@@ -80,15 +81,13 @@ struct VideoFeedView: View {
                             Spacer()
                             
                             // Brain button
-                            Button(action: {
-                                Task {
-                                    do {
-                                        try await viewModel.playerViewModels[currentVideo.id]?.addToSecondBrain()
-                                    } catch {
-                                        LoggingService.error("Failed to add to second brain: \(error.localizedDescription)", component: "Feed")
+                            Button {
+                                if let videoId = scrollPosition {
+                                    Task {
+                                        await viewModel.playerViewModels[videoId]?.addToSecondBrain()
                                     }
                                 }
-                            }) {
+                            } label: {
                                 VStack(spacing: 4) {
                                     Image(systemName: viewModel.playerViewModels[currentVideo.id]?.isInSecondBrain == true ? "brain.head.profile.fill" : "brain.head.profile")
                                         .font(.system(size: 32))

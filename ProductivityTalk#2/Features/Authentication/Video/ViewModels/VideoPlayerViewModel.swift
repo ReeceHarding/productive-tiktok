@@ -123,13 +123,12 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     deinit {
-        Task { @MainActor in
-            cleanupTimer()
-            // Call deinitHandler which contains the cleanup logic we captured at init
-            deinitHandler?()
-            // Log after cleanup
-            LoggingService.debug("VideoPlayerViewModel deinit for video \(video.id)", component: "Player")
-        }
+        // Perform cleanup synchronously since we're already on the main thread
+        cleanupTimer()
+        // Call deinitHandler which contains the cleanup logic we captured at init
+        deinitHandler?()
+        // Log after cleanup
+        LoggingService.debug("VideoPlayerViewModel deinit for video \(video.id)", component: "Player")
     }
     
     public func loadVideo() {
