@@ -2,14 +2,11 @@ import SwiftUI
 import PhotosUI
 import AVKit
 
+@MainActor
 struct VideoUploadView: View {
-    @StateObject private var viewModel: VideoUploadViewModel
+    @StateObject private var viewModel = VideoUploadViewModel()
+    @State private var isUploadEmpty: Bool = true
     @Environment(\.dismiss) private var dismiss
-    
-    init(viewModel: VideoUploadViewModel? = nil) {
-        let vm = viewModel ?? VideoUploadViewModel()
-        _viewModel = StateObject(wrappedValue: vm)
-    }
     
     var body: some View {
         NavigationView {
@@ -31,6 +28,7 @@ struct VideoUploadView: View {
                             // Upload Button
                             PhotosPicker(
                                 selection: $viewModel.selectedItems,
+                                maxSelectionCount: 10,
                                 matching: .videos,
                                 photoLibrary: .shared()
                             ) {
@@ -39,17 +37,17 @@ struct VideoUploadView: View {
                                         .font(.system(size: 40))
                                         .foregroundColor(.blue)
                                     
-                                    Text(viewModel.uploadStates.isEmpty ? "Click to Upload Videos" : "Add More Videos")
+                                    Text(isUploadEmpty ? "Click to Upload Videos" : "Add More Videos")
                                         .font(.headline)
                                     
-                                    if viewModel.uploadStates.isEmpty {
+                                    if isUploadEmpty {
                                         Text("Select one or more videos")
                                             .font(.subheadline)
                                             .foregroundColor(.secondary)
                                     }
                                 }
                                 .frame(maxWidth: .infinity)
-                                .frame(height: viewModel.uploadStates.isEmpty ? 200 : 100)
+                                .frame(height: isUploadEmpty ? 200 : 100)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12)
                                         .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [10]))
@@ -57,12 +55,13 @@ struct VideoUploadView: View {
                                 )
                                 .padding(.horizontal, 20)
                             }
-                            .onChange(of: viewModel.selectedItems) { oldValue, newValue in
-                                if !newValue.isEmpty {
-                                    Task { @MainActor in
-                                        await viewModel.loadVideos()
-                                    }
+                            .onAppear {
+                                Task {
+                                    isUploadEmpty = await viewModel.uploadStates.isEmpty
                                 }
+                            }
+                            .onChange(of: viewModel.uploadStates) { _, newValue in
+                                isUploadEmpty = newValue.isEmpty
                             }
                             
                             // Upload Progress List

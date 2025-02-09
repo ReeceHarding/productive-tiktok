@@ -80,13 +80,15 @@ struct VideoFeedView: View {
                             Spacer()
                             
                             // Brain button
-                            Button {
-                                if let videoId = scrollPosition {
-                                    Task {
-                                        await viewModel.playerViewModels[videoId]?.addToSecondBrain()
+                            Button(action: {
+                                Task {
+                                    do {
+                                        try await viewModel.playerViewModels[currentVideo.id]?.addToSecondBrain()
+                                    } catch {
+                                        LoggingService.error("Failed to add to second brain: \(error.localizedDescription)", component: "Feed")
                                     }
                                 }
-                            } label: {
+                            }) {
                                 VStack(spacing: 4) {
                                     Image(systemName: viewModel.playerViewModels[currentVideo.id]?.isInSecondBrain == true ? "brain.head.profile.fill" : "brain.head.profile")
                                         .font(.system(size: 32))
