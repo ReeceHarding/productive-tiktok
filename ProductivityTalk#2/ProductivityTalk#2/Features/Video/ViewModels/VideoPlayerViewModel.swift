@@ -165,7 +165,7 @@ public class VideoPlayerViewModel: ObservableObject {
                 case .readyToPlay:
                     LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                     // Start buffering only when player is ready
-                    Task { @MainActor in
+                    await Task { @MainActor in
                         do {
                             try await player.preroll(atRate: 1.0)
                             LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
