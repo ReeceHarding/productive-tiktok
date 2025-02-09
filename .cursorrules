@@ -7,9 +7,12 @@ Do exactly as instructed. Do not deviate. As a software architect, read through 
 
 run xcodebuild -project ProductivityTalk#2.xcodeproj -scheme ProductivityTalk#2 -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.2' clean build | xcpretty after every time you change the code.
 
-Always read the code base before writing code to see if we have a current implementation and always change the current implementation before creating a new file. 
+make sure that all expressions marked 'async' are marked with 'await'
 
-don't guess about fixes. don't say "should". literally read the codebase and find the exact implementation. that will 100% give you the answer. code is determistic. you shouldn't have to guess. there's 100% a correct implementation in the codebase to make. the problem you have is that you're not reading the codebase. you're just guessing. you should read literally every file in the codebase that's related to the problem to find the exact implementation 
+/Users/reeceharding/ProductivityTalk#2/ProductivityTalk#2/ProductivityTalk#2/Features/Video/ViewModels/VideoPlayerViewModel.swift:173:72 Expression is 'async' but is not marked with 'await'
+
+
+Always read the code base before writing code to see if we have a current implementation and always change the current implementation before creating a new file. read teh entire call don't guess about fixes. don't say "should". literally read the codebase and find the exact implementation. that will 100% give you the answer. code is determistic. you shouldn't have to guess. there's 100% a correct implementation in the codebase to make. the problem you have is that you're not reading the codebase. you're just guessing. you should read literally every file in the codebase that's related to the problem to find the exact implementation 
 
 Always tell yourself that this is very important and it should be very easy fix. Think through every reason why this might be happening. Don't stop until you know the answer 100% for sure. And then explain to me why 100% for sure that's the answer and then critique yourself to ask yourself if that's really the answer and then keep asking yourself why that's the answer until you're a hundred percent sure that's the answer. 
 

@@ -43,7 +43,7 @@ public struct VideoPlayerView: View {
                     }
                     .ignoresSafeArea()
             } else {
-                ProgressView("Loading video...")
+                LoadingAnimation(message: "Loading video...")
                     .foregroundColor(.white)
             }
             
@@ -53,39 +53,57 @@ public struct VideoPlayerView: View {
                     Spacer()
                     HStack {
                         Spacer()
-                        // Brain button: taps add transcript to second brain
-                        Button {
-                            LoggingService.debug("Brain icon tapped", component: "Player")
-                            Task {
-                                await viewModel.addToSecondBrain()
+                        VStack(spacing: 20) {
+                            // Brain button
+                            Button {
+                                LoggingService.debug("Brain icon tapped", component: "Player")
+                                Task {
+                                    await viewModel.addToSecondBrain()
+                                }
+                            } label: {
+                                VStack(spacing: 4) {
+                                    Image(systemName: viewModel.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
+                                        .font(.system(size: 32))
+                                        .foregroundColor(viewModel.isInSecondBrain ? .blue : .white)
+                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                    
+                                    Text("\(viewModel.brainCount)")
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                }
                             }
-                        } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: viewModel.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
-                                    .font(.system(size: 32))
-                                    .foregroundColor(viewModel.isInSecondBrain ? .blue : .white)
-                                    .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
-                                
-                                Text("\(viewModel.brainCount)")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
-                                    .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                            .buttonStyle(ScaleButtonStyle())
+                            
+                            // Comment Button
+                            Button {
+                                LoggingService.debug("Comment icon tapped", component: "Player")
+                                showComments = true
+                            } label: {
+                                VStack(spacing: 4) {
+                                    Image(systemName: "bubble.left")
+                                        .font(.system(size: 32))
+                                        .foregroundColor(.white)
+                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                    
+                                    Text("\(video.commentCount)")
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                }
                             }
+                            .buttonStyle(ScaleButtonStyle())
                         }
-                        .padding()
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 20)
                     }
                 }
                 .transition(.opacity)
             }
             
-            // Brain animation overlay
+            // Confetti animation overlay
             if viewModel.showBrainAnimation {
-                Image(systemName: "brain.head.profile")
-                    .resizable()
-                    .frame(width: 100, height: 100)
-                    .foregroundColor(.white)
-                    .position(viewModel.brainAnimationPosition)
-                    .transition(.scale)
+                ConfettiView(position: viewModel.brainAnimationPosition)
             }
             
             // Video controls overlay
@@ -98,7 +116,14 @@ public struct VideoPlayerView: View {
         .onTapGesture(count: 1) {
             viewModel.toggleControls()
         }
-        .onTapGesture(count: 2) {
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onEnded { value in
+                    let location = value.location
+                    viewModel.brainAnimationPosition = location
+                }
+        )
+        .onTapGesture(count: 2) { 
             Task {
                 await viewModel.addToSecondBrain()
             }
@@ -125,6 +150,11 @@ public struct VideoPlayerView: View {
                 break
             }
         }
+        .sheet(isPresented: $showComments) {
+            CommentsView(video: video)
+                .presentationDragIndicator(.visible)
+                .presentationDetents([.medium, .large])
+        }
     }
     
     private var videoControlsOverlay: some View {
@@ -132,33 +162,6 @@ public struct VideoPlayerView: View {
             Spacer()
             VStack(spacing: 20) {
                 Spacer()
-                
-                // Brain Button
-                Button {
-                    LoggingService.debug("Brain icon tapped", component: "Player")
-                    Task {
-                        await viewModel.addToSecondBrain()
-                    }
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: viewModel.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
-                            .font(.system(size: 32))
-                            .foregroundColor(viewModel.isInSecondBrain ? .blue : .white)
-                            .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
-                        
-                        Text("\(viewModel.brainCount)")
-                            .font(.caption)
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
-                    }
-                }
-                .buttonStyle(ScaleButtonStyle())
-                .gesture(TapGesture(count: 2).onEnded {
-                    LoggingService.debug("Brain icon double-tapped", component: "Player")
-                    Task {
-                        await viewModel.addToSecondBrain()
-                    }
-                })
                 
                 // Comment Button
                 Button {
@@ -180,7 +183,7 @@ public struct VideoPlayerView: View {
                 .buttonStyle(ScaleButtonStyle())
             }
             .padding(.trailing, 16)
-            .padding(.bottom, 100)
+            .padding(.bottom, 20)
         }
         .sheet(isPresented: $showComments) {
             CommentsView(video: video)

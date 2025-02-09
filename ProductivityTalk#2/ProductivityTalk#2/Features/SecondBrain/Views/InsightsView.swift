@@ -28,7 +28,7 @@ struct InsightsView: View {
                             .cornerRadius(12)
                             .shadow(radius: 2)
                     } else if viewModel.isLoading {
-                        ProgressView()
+                        LoadingAnimation(message: "Loading insight...")
                             .frame(maxWidth: .infinity)
                             .padding()
                     } else {
@@ -139,7 +139,7 @@ struct InsightsView: View {
                         .foregroundColor(.gray)
                     
                     if viewModel.isLoading {
-                        ProgressView()
+                        LoadingAnimation(message: "Loading saved insights...")
                             .frame(maxWidth: .infinity)
                             .padding()
                     } else if viewModel.savedInsights.isEmpty {

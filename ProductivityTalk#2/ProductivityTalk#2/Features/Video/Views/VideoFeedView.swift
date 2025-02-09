@@ -172,7 +172,7 @@ struct VideoFeedView: View {
             Color.black.ignoresSafeArea()
             
             if viewModel.isLoading {
-                ProgressView("Loading videos...")
+                LoadingAnimation(message: "Loading videos...")
                     .foregroundColor(.white)
             } else if let error = viewModel.error {
                 Text(error.localizedDescription)

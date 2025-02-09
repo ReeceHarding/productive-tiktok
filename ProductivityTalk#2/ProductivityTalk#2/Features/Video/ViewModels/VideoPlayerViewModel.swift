@@ -48,7 +48,12 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     private func checkSecondBrainStatus() async throws {
-        guard let userId = Auth.auth().currentUser?.uid else { return }
+        guard let userId = Auth.auth().currentUser?.uid else { 
+            await MainActor.run {
+                self.isInSecondBrain = false
+            }
+            return 
+        }
         
         let snapshot = try await firestore.collection("users")
             .document(userId)
@@ -58,7 +63,9 @@ public class VideoPlayerViewModel: ObservableObject {
             .getDocuments()
         
         await MainActor.run {
-            self.isInSecondBrain = !snapshot.documents.isEmpty
+            let exists = !snapshot.documents.isEmpty
+            self.isInSecondBrain = exists
+            LoggingService.debug("Second brain status checked for video \(self.video.id) - isInSecondBrain: \(exists)", component: "Player")
         }
     }
     
@@ -190,12 +197,12 @@ public class VideoPlayerViewModel: ObservableObject {
         // Optimistic update
         let wasInSecondBrain = isInSecondBrain
         isInSecondBrain.toggle()
-        brainCount += wasInSecondBrain ? -1 : 1
+        brainCount += isInSecondBrain ? 1 : -1
         
         showBrainAnimation = true
         
         do {
-            if wasInSecondBrain {
+            if !isInSecondBrain {
                 // Remove from SecondBrain
                 let snapshot = try await firestore.collection("users")
                     .document(userId)
@@ -243,12 +250,16 @@ public class VideoPlayerViewModel: ObservableObject {
         } catch {
             // Revert optimistic update on error
             isInSecondBrain.toggle()
-            brainCount -= wasInSecondBrain ? -1 : 1
+            brainCount -= isInSecondBrain ? 1 : -1
             LoggingService.error("Failed to update SecondBrain: \(error.localizedDescription)", component: "SecondBrain")
         }
         
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        showBrainAnimation = false
+        do {
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            showBrainAnimation = false
+        } catch {
+            LoggingService.error("Error during animation delay: \(error)", component: "SecondBrain")
+        }
     }
     
     public func play() {

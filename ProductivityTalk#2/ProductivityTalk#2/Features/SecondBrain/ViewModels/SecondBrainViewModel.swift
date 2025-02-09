@@ -257,32 +257,72 @@ class SecondBrainViewModel: ObservableObject {
     }
     
     func updateTopicDistribution() async {
-        guard let userId = UserDefaults.standard.string(forKey: "userId") else { return }
+        guard let userId = UserDefaults.standard.string(forKey: "userId") else {
+            print("❌ SecondBrainViewModel: No user ID found for topic distribution update")
+            return
+        }
         
-        print("🏷️ SecondBrainViewModel: Updating topic distribution for user: \(userId)")
+        print("\n🏷️ SecondBrainViewModel: Starting topic distribution update")
+        print("👤 User ID: \(userId)")
         
         do {
             // Get all saved videos
+            print("📚 SecondBrainViewModel: Fetching saved videos from path: savedVideos")
             let savedVideosSnapshot = try await db.collection("savedVideos")
                 .whereField("userId", isEqualTo: userId)
                 .getDocuments()
             
+            print("📊 Found \(savedVideosSnapshot.documents.count) saved videos")
+            
             // Get video details for saved videos
             var topicCounts: [String: Int] = [:]
+            var processedVideos = 0
+            var videosWithTags = 0
+            var totalTags = 0
             
             for savedVideo in savedVideosSnapshot.documents {
                 if let videoId = savedVideo.data()["videoId"] as? String {
+                    print("\n🎥 Processing video: \(videoId)")
                     let videoDoc = try await db.collection("videos").document(videoId).getDocument()
+                    
+                    print("📄 Video document exists: \(videoDoc.exists)")
+                    if let data = videoDoc.data() {
+                        print("📄 Video data fields: \(data.keys.joined(separator: ", "))")
+                    }
+                    
                     if let tags = videoDoc.data()?["tags"] as? [String] {
+                        print("✅ Found tags: \(tags)")
+                        videosWithTags += 1
+                        totalTags += tags.count
                         for tag in tags {
                             topicCounts[tag, default: 0] += 1
                         }
+                    } else {
+                        print("⚠️ No tags found for video: \(videoId)")
+                        if let autoTags = videoDoc.data()?["autoTags"] as? [String] {
+                            print("🤖 Found autoTags instead: \(autoTags)")
+                        }
                     }
+                    processedVideos += 1
                 }
+            }
+            
+            print("\n📈 Topic Distribution Summary:")
+            print("📊 Processed \(processedVideos) videos")
+            print("📊 Found tags in \(videosWithTags) videos")
+            print("📊 Total tags found: \(totalTags)")
+            print("📊 Unique topics: \(topicCounts.count)")
+            for (topic, count) in topicCounts.sorted(by: { $0.value > $1.value }) {
+                print("   - \(topic): \(count) occurrences")
+            }
+            
+            if topicCounts.isEmpty {
+                print("⚠️ No topics found in any videos")
             }
             
             // Update user document
             let userRef = db.collection("users").document(userId)
+            print("\n💾 Updating user document with topic distribution")
             let topicCountsCopy = topicCounts // Create a copy to avoid capturing the mutable dictionary
             @Sendable func updateTopicDistribution() async throws {
                 try await userRef.updateData([
@@ -291,14 +331,14 @@ class SecondBrainViewModel: ObservableObject {
             }
             try await updateTopicDistribution()
             
-            print("✅ SecondBrainViewModel: Successfully updated topic distribution")
-            print("📊 Topics: \(topicCounts.keys.joined(separator: ", "))")
+            print("✅ Successfully updated topic distribution")
             
             // Reload user data to reflect changes
             await loadUserData()
             
         } catch {
-            print("❌ SecondBrainViewModel: Error updating topic distribution: \(error.localizedDescription)")
+            print("\n❌ SecondBrainViewModel: Error updating topic distribution")
+            print("   - Error: \(error.localizedDescription)")
             self.error = "Failed to update topic distribution: \(error.localizedDescription)"
         }
     }
