@@ -2,12 +2,13 @@ import Foundation
 import SwiftUI
 import FirebaseAuth
 import FirebaseFirestore
+import Combine
 
 @MainActor
 class SignInViewModel: ObservableObject {
+    // MARK: - Published Properties
     @Published var email = ""
     @Published var password = ""
-    
     @Published private(set) var isLoading = false
     @Published var showError = false
     @Published var showResetAlert = false
@@ -16,40 +17,81 @@ class SignInViewModel: ObservableObject {
     @Published private(set) var biometricType: BiometricType = .none
     @Published var showBiometricAlert = false
     
+    // MARK: - Private Properties
     private let authManager = AuthenticationManager.shared
     private let biometricService = BiometricAuthService.shared
+    private var validationTask: Task<Void, Never>?
+    private let validationState: ValidationState
+    private var cancellables = Set<AnyCancellable>()
     
+    // MARK: - Computed Properties
+    var isValid: Bool {
+        isValidEmail(email) && password.count >= 6
+    }
+    
+    // MARK: - Initialization
     init() {
+        self.validationState = ValidationState()
         biometricType = biometricService.biometricType
-        if biometricService.isBiometricLoginEnabled {
-            Task {
-                await authenticateWithBiometrics()
+        LoggingService.debug("🔐 SignIn: Initialized with biometric type: \(biometricType.description)", component: "Authentication")
+        
+        // Setup validation publishers
+        Publishers.CombineLatest($email, $password)
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .sink { [weak self] email, password in
+                guard let self = self else { return }
+                Task {
+                    await self.validateInputs(email: email, password: password)
+                }
             }
+            .store(in: &cancellables)
+    }
+    
+    deinit {
+        validationTask?.cancel()
+        cancellables.removeAll()
+        Task {
+            await validationState.cancelAll()
         }
     }
     
-    var isValid: Bool {
+    // MARK: - Private Methods
+    private func validateInputs(email: String, password: String) async {
         let emailIsValid = isValidEmail(email)
         let passwordIsValid = password.count >= 6
         
-        // Update validation message
+        let newMessage: String
         if email.isEmpty && password.isEmpty {
-            validationMessage = ""
+            newMessage = ""
         } else if !emailIsValid && email.count > 0 {
-            validationMessage = "Please enter a valid email address"
+            newMessage = "Please enter a valid email address"
         } else if !passwordIsValid && password.count > 0 {
-            validationMessage = "Password must be at least 6 characters"
+            newMessage = "Password must be at least 6 characters"
         } else {
-            validationMessage = ""
+            newMessage = ""
         }
         
-        return emailIsValid && passwordIsValid
+        if newMessage != validationMessage {
+            validationMessage = newMessage
+        }
     }
     
     private func isValidEmail(_ email: String) -> Bool {
         let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
         let emailPredicate = NSPredicate(format:"SELF MATCHES %@", emailRegex)
         return emailPredicate.evaluate(with: email)
+    }
+    
+    // MARK: - Public Methods
+    func updateValidation() async {
+        await validationState.trigger()
+    }
+    
+    func checkBiometricAuth() async {
+        LoggingService.debug("🔐 SignIn: Checking biometric authentication", component: "Authentication")
+        if biometricService.isBiometricLoginEnabled {
+            await authenticateWithBiometrics()
+        }
     }
     
     func signIn() async {
@@ -90,6 +132,7 @@ class SignInViewModel: ObservableObject {
     }
     
     func authenticateWithBiometrics() async {
+        LoggingService.debug("🔐 SignIn: Starting biometric authentication", component: "Authentication")
         guard biometricService.canUseBiometrics() else {
             LoggingService.error("❌ SignIn: Biometrics not available", component: "Authentication")
             return
@@ -154,5 +197,32 @@ class SignInViewModel: ObservableObject {
         }
         
         isLoading = false
+    }
+}
+
+// MARK: - Validation State Management
+private actor ValidationState {
+    private var nextId = 0
+    private var callbacks: [Int: @Sendable () async -> Void] = [:]
+    
+    func register(_ callback: @escaping @Sendable () async -> Void) -> Int {
+        let id = nextId
+        nextId += 1
+        callbacks[id] = callback
+        return id
+    }
+    
+    func unregister(id: Int) {
+        callbacks.removeValue(forKey: id)
+    }
+    
+    func trigger() async {
+        for callback in callbacks.values {
+            await callback()
+        }
+    }
+    
+    func cancelAll() {
+        callbacks.removeAll()
     }
 } 

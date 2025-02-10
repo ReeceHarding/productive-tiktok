@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct SignInView: View {
     @StateObject private var viewModel = SignInViewModel()
@@ -53,6 +54,9 @@ struct SignInView: View {
                             )
                             .onChange(of: viewModel.email) { _ in
                                 impactGenerator.impactOccurred(intensity: 0.3)
+                                Task {
+                                    await viewModel.updateValidation()
+                                }
                             }
                             
                             CustomTextField(
@@ -64,6 +68,9 @@ struct SignInView: View {
                             )
                             .onChange(of: viewModel.password) { _ in
                                 impactGenerator.impactOccurred(intensity: 0.3)
+                                Task {
+                                    await viewModel.updateValidation()
+                                }
                             }
                         }
                         .padding(.horizontal, 20)
@@ -80,7 +87,9 @@ struct SignInView: View {
                         // Sign In Button
                         Button(action: {
                             impactGenerator.impactOccurred(intensity: 0.6)
-                            signIn()
+                            Task {
+                                await viewModel.signIn()
+                            }
                         }) {
                             HStack {
                                 if viewModel.isLoading {
@@ -174,44 +183,38 @@ struct SignInView: View {
                     .padding(.bottom, 30)
                 }
             }
-            .sheet(isPresented: $showSignUp) {
-                SignUpView()
-            }
-            .alert("Error", isPresented: $viewModel.showError) {
-                Button("OK", role: .cancel) {
-                    notificationGenerator.notificationOccurred(.error)
-                }
-            } message: {
-                Text(viewModel.errorMessage ?? "An unknown error occurred")
-            }
-            .alert("Enable \(viewModel.biometricType.description)?", isPresented: $viewModel.showBiometricAlert) {
-                Button("Not Now", role: .cancel) {}
-                Button("Enable") {
-                    notificationGenerator.notificationOccurred(.success)
-                    viewModel.enableBiometricLogin()
-                }
-            } message: {
-                Text("Would you like to enable \(viewModel.biometricType.description) for faster sign in?")
-            }
-            .alert("Password Reset", isPresented: $viewModel.showResetAlert) {
-                Button("OK", role: .cancel) {
-                    notificationGenerator.notificationOccurred(.success)
-                }
-            } message: {
-                Text("If an account exists with this email, you will receive a password reset link.")
-            }
-            .onChange(of: scenePhase) { newPhase in
-                if newPhase == .active {
-                    notificationGenerator.prepare()
-                    impactGenerator.prepare()
-                }
-            }
         }
-    }
-    
-    private func signIn() {
-        Task {
-            await viewModel.signIn()
+        .task {
+            // Initialize haptic feedback generators and check biometric auth
+            notificationGenerator.prepare()
+            impactGenerator.prepare()
+            await viewModel.checkBiometricAuth()
+        }
+        .sheet(isPresented: $showSignUp) {
+            SignUpView()
+        }
+        .alert("Error", isPresented: $viewModel.showError) {
+            Button("OK", role: .cancel) {
+                notificationGenerator.notificationOccurred(.error)
+            }
+        } message: {
+            Text(viewModel.errorMessage ?? "An unknown error occurred")
+        }
+        .alert("Enable \(viewModel.biometricType.description)?", isPresented: $viewModel.showBiometricAlert) {
+            Button("Not Now", role: .cancel) {}
+            Button("Enable") {
+                notificationGenerator.notificationOccurred(.success)
+                viewModel.enableBiometricLogin()
+            }
+        } message: {
+            Text("Would you like to enable \(viewModel.biometricType.description) for faster sign in?")
+        }
+        .alert("Password Reset", isPresented: $viewModel.showResetAlert) {
+            Button("OK", role: .cancel) {
+                notificationGenerator.notificationOccurred(.success)
+            }
+        } message: {
+            Text("A password reset link has been sent to your email")
         }
     }
 }
