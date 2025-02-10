@@ -11,55 +11,19 @@ struct VideoFeedView: View {
     @State private var selectedVideo: Video?
     
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(viewModel.videos) { video in
-                    VideoPlayerView(video: video)
-                        .id(video.id)
-                        .containerRelativeFrame([.horizontal, .vertical])
-                        .frame(height: UIScreen.main.bounds.height)
-                        .overlay(alignment: .topTrailing) {
-                            HStack(spacing: 16) {
-                                // Calendar button
-                                Button(action: {
-                                    selectedVideo = video
-                                    showingSchedulingView = true
-                                }) {
-                                    Image(systemName: "calendar.badge.plus")
-                                        .font(.title2)
-                                        .foregroundColor(.white)
-                                        .shadow(radius: 2)
-                                }
-                                .padding(.trailing, 8)
-                                
-                                // Second Brain button (if it exists)
-                                if let secondBrainButton = video.secondBrainButton {
-                                    secondBrainButton
-                                }
-                            }
-                            .padding(.top, 60)
-                            .padding(.trailing)
-                        }
-                }
-            }
-            .scrollTargetLayout()
-        }
-        .scrollPosition(id: $scrollPosition)
-        .scrollTargetBehavior(.paging)
-        .scrollIndicators(.hidden)
-        .ignoresSafeArea()
+        VideoFeedScrollView(
+            videos: viewModel.videos,
+            scrollPosition: $scrollPosition,
+            selectedVideo: $selectedVideo,
+            showingSchedulingView: $showingSchedulingView
+        )
         .background(.black)
         .overlay {
-            if viewModel.isLoading {
-                LoadingAnimation(message: "Loading videos...")
-                    .foregroundColor(.white)
-            } else if let error = viewModel.error {
-                Text(error.localizedDescription)
-                    .foregroundColor(.white)
-            } else if viewModel.videos.isEmpty {
-                Text("No videos available")
-                    .foregroundColor(.white)
-            }
+            VideoFeedOverlay(
+                isLoading: viewModel.isLoading,
+                error: viewModel.error,
+                videos: viewModel.videos
+            )
         }
         .onAppear {
             Task {
@@ -72,22 +36,7 @@ struct VideoFeedView: View {
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
-            switch newPhase {
-            case .active:
-                if let videoId = scrollPosition {
-                    Task {
-                        await viewModel.playerViewModels[videoId]?.play()
-                    }
-                }
-            case .inactive, .background:
-                if let videoId = scrollPosition {
-                    Task {
-                        await viewModel.playerViewModels[videoId]?.pausePlayback()
-                    }
-                }
-            @unknown default:
-                break
-            }
+            handleScenePhaseChange(newPhase)
         }
         .sheet(isPresented: $showingSchedulingView) {
             if let video = selectedVideo,
@@ -96,6 +45,104 @@ struct VideoFeedView: View {
                     transcript: transcript,
                     videoTitle: video.title
                 )
+            }
+        }
+    }
+    
+    private func handleScenePhaseChange(_ newPhase: ScenePhase) {
+        switch newPhase {
+        case .active:
+            if let videoId = scrollPosition {
+                Task {
+                    await viewModel.playerViewModels[videoId]?.play()
+                }
+            }
+        case .inactive, .background:
+            if let videoId = scrollPosition {
+                Task {
+                    await viewModel.playerViewModels[videoId]?.pausePlayback()
+                }
+            }
+        @unknown default:
+            break
+        }
+    }
+}
+
+// MARK: - VideoFeedScrollView
+private struct VideoFeedScrollView: View {
+    let videos: [Video]
+    @Binding var scrollPosition: String?
+    @Binding var selectedVideo: Video?
+    @Binding var showingSchedulingView: Bool
+    
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(videos) { video in
+                    VideoPlayerView(video: video)
+                        .id(video.id)
+                        .containerRelativeFrame([.horizontal, .vertical])
+                        .frame(height: UIScreen.main.bounds.height)
+                        .overlay(alignment: .topTrailing) {
+                            VideoControlButtons(
+                                video: video,
+                                selectedVideo: $selectedVideo,
+                                showingSchedulingView: $showingSchedulingView
+                            )
+                        }
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .scrollPosition(id: $scrollPosition)
+        .scrollTargetBehavior(.paging)
+        .scrollIndicators(.hidden)
+        .ignoresSafeArea()
+    }
+}
+
+// MARK: - VideoControlButtons
+private struct VideoControlButtons: View {
+    let video: Video
+    @Binding var selectedVideo: Video?
+    @Binding var showingSchedulingView: Bool
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            Button(action: {
+                selectedVideo = video
+                showingSchedulingView = true
+            }) {
+                Image(systemName: "calendar.badge.plus")
+                    .font(.title2)
+                    .foregroundColor(.white)
+                    .shadow(radius: 2)
+            }
+            .padding(.trailing, 8)
+        }
+        .padding(.top, 60)
+        .padding(.trailing)
+    }
+}
+
+// MARK: - VideoFeedOverlay
+private struct VideoFeedOverlay: View {
+    let isLoading: Bool
+    let error: Error?
+    let videos: [Video]
+    
+    var body: some View {
+        Group {
+            if isLoading {
+                LoadingAnimation(message: "Loading videos...")
+                    .foregroundColor(.white)
+            } else if let error = error {
+                Text(error.localizedDescription)
+                    .foregroundColor(.white)
+            } else if videos.isEmpty {
+                Text("No videos available")
+                    .foregroundColor(.white)
             }
         }
     }

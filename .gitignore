@@ -103,4 +103,8 @@ DerivedData/
 !example.xcconfig
 
 # New code injection container
-injected_container.xcconfig 
+injected_container.xcconfig
+
+# Config files with sensitive data
+ProductivityTalk#2/Config/APIConfig.swift
+APIConfig.swift 

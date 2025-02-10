@@ -178,42 +178,56 @@ actor VideoProcessingService {
         let metadata = StorageMetadata()
         metadata.contentType = "video/mp4"  // Always use MP4 content type for videos
         
+        // Create upload task
+        let uploadTask = storageRef.putFile(from: fileURL, metadata: metadata)
+        
+        // Setup progress monitoring
+        setupUploadProgressMonitoring(uploadTask: uploadTask, filename: actualFilename)
+        
+        // Return continuation
         return try await withCheckedThrowingContinuation { continuation in
-            let uploadTask = storageRef.putFile(from: fileURL, metadata: metadata)
-            var lastReportedProgress: Int = -1
-            
-            // Monitor progress more frequently
-            uploadTask.observe(.progress) { snapshot in
-                let percentComplete = Int(100.0 * Double(snapshot.progress?.completedUnitCount ?? 0) / Double(snapshot.progress?.totalUnitCount ?? 1))
-                if percentComplete != lastReportedProgress {  // Report every change
-                    LoggingService.progress("Video upload", progress: Double(percentComplete) / 100.0, id: actualFilename)
-                    LoggingService.debug("📊 Upload progress: \(percentComplete)% (\(ByteCountFormatter.string(fromByteCount: snapshot.progress?.completedUnitCount ?? 0, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: snapshot.progress?.totalUnitCount ?? 1, countStyle: .file)))", component: "Storage")
-                    lastReportedProgress = percentComplete
-                }
-            }
-            
-            // Monitor completion
             uploadTask.observe(.success) { _ in
-                LoggingService.success("✅ Upload completed successfully", component: "Storage")
-                // Use a detached task to avoid actor reentrancy
-                Task.detached {
+                Task {
                     do {
                         let downloadURL = try await storageRef.downloadURL()
-                        LoggingService.debug("📍 Download URL: \(downloadURL.absoluteString)", component: "Storage")
                         continuation.resume(returning: downloadURL.absoluteString)
                     } catch {
-                        LoggingService.error("❌ Failed to get download URL: \(error)", component: "Storage")
                         continuation.resume(throwing: error)
                     }
                 }
             }
             
-            // Monitor failure
             uploadTask.observe(.failure) { snapshot in
-                if let error = snapshot.error {
-                    LoggingService.error("❌ Upload failed: \(error)", component: "Storage")
-                    continuation.resume(throwing: error)
-                }
+                continuation.resume(throwing: snapshot.error ?? NSError(domain: "VideoProcessingService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Upload failed"]))
+            }
+        }
+    }
+    
+    private func setupUploadProgressMonitoring(uploadTask: StorageUploadTask, filename: String) {
+        var lastReportedProgress: Int = -1
+        
+        // Break down the progress monitoring into smaller parts
+        uploadTask.observe(.progress) { snapshot in
+            guard let progress = snapshot.progress else { return }
+            
+            // Calculate progress
+            let completed = Double(progress.completedUnitCount)
+            let total = Double(progress.totalUnitCount)
+            let percentComplete = Int(100.0 * completed / total)
+            
+            // Only report if progress has changed
+            if percentComplete != lastReportedProgress {
+                // Log progress
+                LoggingService.progress("Video upload", progress: Double(percentComplete) / 100.0, component: filename)
+                
+                // Format byte counts
+                let completedStr = ByteCountFormatter.string(fromByteCount: progress.completedUnitCount, countStyle: .file)
+                let totalStr = ByteCountFormatter.string(fromByteCount: progress.totalUnitCount, countStyle: .file)
+                
+                // Log detailed progress
+                LoggingService.debug("📊 Upload progress: \(percentComplete)% (\(completedStr) / \(totalStr))", component: "Storage")
+                
+                lastReportedProgress = percentComplete
             }
         }
     }

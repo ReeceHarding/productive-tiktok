@@ -201,7 +201,7 @@ final class VideoUploadViewModel: ObservableObject {
                     onProgress: { [weak self] progress in
                         guard let progress = progress else { return }
                         let percentage = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
-                        LoggingService.progress("Video upload", progress: percentage, id: id)
+                        LoggingService.progress("Video upload", progress: percentage, component: id)
                         self?.uploadStates[id]?.progress = percentage
                     }
                 )

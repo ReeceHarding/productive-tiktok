@@ -67,11 +67,8 @@ actor CalendarLLMService {
             "max_tokens": 300
         ]
         
-        guard let openAIKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"] else {
-            throw NSError(domain: "CalendarLLMService",
-                          code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Missing OPENAI_API_KEY"])
-        }
+        // Use the API key from APIConfig
+        let openAIKey = APIConfig.shared.openAIKey
         
         let url = URL(string: "https://api.openai.com/v1/chat/completions")!
         var urlRequest = URLRequest(url: url)

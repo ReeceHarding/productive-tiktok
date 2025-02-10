@@ -49,11 +49,10 @@ public struct VideoPlayerView: View {
             
             // Overlay for UI controls (shown when toggled)
             if viewModel.showControls {
-                VStack {
-                    Spacer()
+                GeometryReader { geometry in
                     HStack {
                         Spacer()
-                        VStack(spacing: 20) {
+                        VStack(spacing: 24) {
                             // Brain button
                             Button {
                                 LoggingService.debug("Brain icon tapped for video: \(video.id)", component: "Player")
@@ -65,41 +64,43 @@ public struct VideoPlayerView: View {
                                     }
                                 }
                             } label: {
-                                VStack(spacing: 4) {
+                                VStack(spacing: 6) {
                                     Image(systemName: viewModel.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
-                                        .font(.system(size: 32))
+                                        .font(.system(size: 34))
                                         .foregroundColor(viewModel.isInSecondBrain ? .blue : .white)
-                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                        .shadow(color: .black.opacity(0.6), radius: 5, x: 0, y: 2)
                                     
                                     Text("\(viewModel.brainCount)")
-                                        .font(.caption)
+                                        .font(.system(size: 14, weight: .medium))
                                         .foregroundColor(.white)
-                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                        .shadow(color: .black.opacity(0.6), radius: 4, x: 0, y: 2)
                                 }
                             }
                             .buttonStyle(ScaleButtonStyle())
+                            .frame(width: 44, height: 60)
                             
                             // Comment Button
                             Button {
                                 LoggingService.debug("Comment icon tapped for video: \(video.id)", component: "Player")
                                 showComments = true
                             } label: {
-                                VStack(spacing: 4) {
+                                VStack(spacing: 6) {
                                     Image(systemName: "bubble.left")
-                                        .font(.system(size: 32))
+                                        .font(.system(size: 34))
                                         .foregroundColor(.white)
-                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                        .shadow(color: .black.opacity(0.6), radius: 5, x: 0, y: 2)
                                     
                                     Text("\(video.commentCount)")
-                                        .font(.caption)
+                                        .font(.system(size: 14, weight: .medium))
                                         .foregroundColor(.white)
-                                        .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                                        .shadow(color: .black.opacity(0.6), radius: 4, x: 0, y: 2)
                                 }
                             }
                             .buttonStyle(ScaleButtonStyle())
+                            .frame(width: 44, height: 60)
                         }
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 16)
+                        .padding(.trailing, geometry.size.width * 0.05)
+                        .padding(.bottom, geometry.size.height * 0.15)
                     }
                 }
                 .transition(.opacity)

@@ -28,6 +28,11 @@ const FormData = require("form-data");
 admin.initializeApp();
 const storage = new Storage();
 
+// Remove hardcoded key and use environment variable
+if (!process.env.OPENAI_API_KEY) {
+  console.error("⚠️ OPENAI_API_KEY environment variable is not set");
+}
+
 exports.processVideo = onObjectFinalized({
   timeoutSeconds: 540,
   memory: "2GB",
@@ -105,8 +110,8 @@ exports.processVideo = onObjectFinalized({
       formData,
       {
         headers: {
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          ...formData.getHeaders(),
         },
         maxBodyLength: Infinity,
       },
@@ -139,8 +144,8 @@ exports.processVideo = onObjectFinalized({
         },
         {
           headers: {
+            'Content-Type': 'application/json',
             Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
           },
           maxBodyLength: Infinity,
         },
@@ -181,8 +186,8 @@ exports.processVideo = onObjectFinalized({
           },
           {
             headers: {
+              'Content-Type': 'application/json',
               Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-              "Content-Type": "application/json",
             },
           }
         ),
@@ -200,8 +205,8 @@ exports.processVideo = onObjectFinalized({
           },
           {
             headers: {
+              'Content-Type': 'application/json',
               Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-              "Content-Type": "application/json",
             },
           }
         ),
@@ -219,8 +224,8 @@ exports.processVideo = onObjectFinalized({
           },
           {
             headers: {
+              'Content-Type': 'application/json',
               Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-              "Content-Type": "application/json",
             },
           }
         )

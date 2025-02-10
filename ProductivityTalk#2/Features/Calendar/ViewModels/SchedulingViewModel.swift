@@ -1,5 +1,9 @@
 import Foundation
 import SwiftUI
+import os.log
+
+// Add logging for better debugging
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Scheduling")
 
 /**
  SchedulingViewModel coordinates between the UI layer and the services:
@@ -23,19 +27,20 @@ final class SchedulingViewModel: ObservableObject {
      Generate an event proposal using the LLM service based on video transcript and preferences
      */
     func generateEventProposal(transcript: String, timeOfDay: String, userPrompt: String) async throws {
-        LoggingService.debug("Generating event proposal from transcript", component: "Scheduling")
-        eventProposal = try await llmService.generateEventProposal(
+        logger.debug("Generating event proposal from transcript")
+        let (title, description, duration) = try await llmService.generateEventProposal(
             transcript: transcript,
             timeOfDay: timeOfDay,
             userPrompt: userPrompt
         )
+        eventProposal = EventProposal(title: title, description: description, durationMinutes: duration)
     }
     
     /**
      Find available time slots that match the desired duration
      */
     func findAvailableTimeSlots(forDuration durationMinutes: Int) async throws {
-        LoggingService.debug("Finding available time slots for \(durationMinutes) minutes", component: "Scheduling")
+        logger.debug("Finding available time slots for \(durationMinutes) minutes")
         availableTimeSlots = try await calendarManager.findFreeTime(desiredDurationInMinutes: durationMinutes)
     }
     
@@ -43,14 +48,14 @@ final class SchedulingViewModel: ObservableObject {
      Schedule an event at the specified time
      */
     func scheduleEvent(title: String, description: String, startTime: Date, durationMinutes: Int) async throws {
-        LoggingService.debug("Scheduling event: \(title) at \(startTime)", component: "Scheduling")
+        logger.debug("Scheduling event: \(title) at \(startTime)")
         let eventId = try await calendarManager.createCalendarEvent(
             title: title,
             description: description,
             startDate: startTime,
             durationMinutes: durationMinutes
         )
-        LoggingService.success("Event scheduled successfully with ID: \(eventId)", component: "Scheduling")
+        logger.info("Event scheduled successfully with ID: \(eventId)")
     }
 }
 
