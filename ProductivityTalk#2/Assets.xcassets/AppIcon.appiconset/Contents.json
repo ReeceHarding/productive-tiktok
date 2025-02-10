@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "Untitled design 1.png",
+      "filename" : "Untitled design-2.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,7 @@
           "value" : "tinted"
         }
       ],
-      "filename" : "Untitled design 2.png",
+      "filename" : "Untitled design-2 1.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -105,7 +105,7 @@
       "size" : "83.5x83.5"
     },
     {
-      "filename" : "Untitled design.png",
+      "filename" : "Untitled design-2 2.png",
       "idiom" : "ios-marketing",
       "scale" : "1x",
       "size" : "1024x1024"
