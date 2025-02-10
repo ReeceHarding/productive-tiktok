@@ -5,63 +5,92 @@ import Combine
 
 @MainActor
 class CommentsViewModel: ObservableObject {
+    // MARK: - Published Properties
     @Published var comments: [Comment] = []
     @Published var newCommentText: String = ""
     @Published var isLoading: Bool = false
     @Published var error: String?
+    @Published private(set) var hasMoreComments = true
+    @Published private(set) var isLoadingMore = false
     
+    // MARK: - Private Properties
     private let video: Video
     private let firestore = Firestore.firestore()
     private var listenerRegistration: ListenerRegistration?
+    private let pageSize = 20
+    private var lastDocument: DocumentSnapshot?
     
+    // MARK: - Initialization
     init(video: Video) {
         self.video = video
-        print("📱 CommentsViewModel: Initialized for video ID: \(video.id)")
+        LoggingService.debug("📱 CommentsViewModel: Initialized for video ID: \(video.id)", component: "Comments")
         setupCommentsListener()
     }
     
-    private func setupCommentsListener() {
-        print("🎧 CommentsViewModel: Setting up real-time comments listener")
+    // MARK: - Public Methods
+    func refreshComments() async {
+        LoggingService.debug("🔄 CommentsViewModel: Refreshing comments", component: "Comments")
+        lastDocument = nil
+        comments = []
+        await loadMoreComments()
+    }
+    
+    func loadMoreComments() async {
+        guard !isLoadingMore && hasMoreComments else { return }
         
-        listenerRegistration = firestore
-            .collection("videos")
-            .document(video.id)
-            .collection("comments")
-            .order(by: "timestamp", descending: true)
-            .addSnapshotListener { [weak self] snapshot, error in
-                guard let self = self else { return }
-                
-                if let error = error {
-                    print("❌ CommentsViewModel: Error listening for comments: \(error.localizedDescription)")
-                    self.error = "Failed to load comments: \(error.localizedDescription)"
-                    return
-                }
-                
-                guard let documents = snapshot?.documents else {
-                    print("❌ CommentsViewModel: No documents in snapshot")
-                    return
-                }
-                
-                print("📥 CommentsViewModel: Received \(documents.count) comments")
-                
-                self.comments = documents.compactMap { document in
-                    guard let comment = Comment(document: document) else {
-                        print("⚠️ CommentsViewModel: Failed to parse comment from document: \(document.documentID)")
-                        return nil
-                    }
-                    return comment
-                }
+        isLoadingMore = true
+        LoggingService.debug("📥 CommentsViewModel: Loading more comments", component: "Comments")
+        
+        do {
+            var query = firestore
+                .collection("videos")
+                .document(video.id)
+                .collection("comments")
+                .order(by: "timestamp", descending: true)
+                .limit(to: pageSize)
+            
+            if let lastDoc = lastDocument {
+                query = query.start(afterDocument: lastDoc)
             }
+            
+            let snapshot = try await query.getDocuments()
+            
+            guard !snapshot.documents.isEmpty else {
+                LoggingService.debug("📭 CommentsViewModel: No more comments to load", component: "Comments")
+                hasMoreComments = false
+                isLoadingMore = false
+                return
+            }
+            
+            lastDocument = snapshot.documents.last
+            
+            let newComments: [Comment] = snapshot.documents.compactMap { document in
+                guard let comment = Comment(document: document) else {
+                    LoggingService.error("⚠️ CommentsViewModel: Failed to parse comment from document: \(document.documentID)", component: "Comments")
+                    return nil
+                }
+                return comment
+            }
+            
+            LoggingService.debug("✅ CommentsViewModel: Loaded \(newComments.count) more comments", component: "Comments")
+            comments.append(contentsOf: newComments)
+            
+        } catch {
+            LoggingService.error("❌ CommentsViewModel: Error loading more comments: \(error.localizedDescription)", component: "Comments")
+            self.error = "Failed to load more comments: \(error.localizedDescription)"
+        }
+        
+        isLoadingMore = false
     }
     
     func addComment() async {
         guard !newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            print("⚠️ CommentsViewModel: Attempted to add empty comment")
+            LoggingService.warning("⚠️ CommentsViewModel: Attempted to add empty comment", component: "Comments")
             return
         }
         
         guard let userId = Auth.auth().currentUser?.uid else {
-            print("❌ CommentsViewModel: No authenticated user")
+            LoggingService.error("❌ CommentsViewModel: No authenticated user", component: "Comments")
             self.error = "Please sign in to comment"
             return
         }
@@ -77,7 +106,7 @@ class CommentsViewModel: ObservableObject {
         )
         
         // Add optimistic comment to UI
-        print("🔄 CommentsViewModel: Adding optimistic comment to UI")
+        LoggingService.debug("🔄 CommentsViewModel: Adding optimistic comment to UI", component: "Comments")
         comments.insert(optimisticComment, at: 0)
         newCommentText = ""
         
@@ -97,7 +126,7 @@ class CommentsViewModel: ObservableObject {
                 userProfileImageURL: userProfileImageURL
             )
             
-            print("💾 CommentsViewModel: Saving comment to Firestore")
+            LoggingService.debug("💾 CommentsViewModel: Saving comment to Firestore", component: "Comments")
             
             // Save to Firestore
             try await firestore
@@ -123,10 +152,10 @@ class CommentsViewModel: ObservableObject {
                 return nil
             })
             
-            print("✅ CommentsViewModel: Successfully added comment")
+            LoggingService.success("✅ CommentsViewModel: Successfully added comment", component: "Comments")
             
         } catch {
-            print("❌ CommentsViewModel: Error adding comment: \(error.localizedDescription)")
+            LoggingService.error("❌ CommentsViewModel: Error adding comment: \(error.localizedDescription)", component: "Comments")
             
             // Remove optimistic comment on error
             if let index = comments.firstIndex(where: { $0.id == optimisticComment.id }) {
@@ -196,8 +225,49 @@ class CommentsViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Private Methods
+    private func setupCommentsListener() {
+        LoggingService.debug("🎧 CommentsViewModel: Setting up real-time comments listener", component: "Comments")
+        isLoading = true
+        
+        listenerRegistration = firestore
+            .collection("videos")
+            .document(video.id)
+            .collection("comments")
+            .order(by: "timestamp", descending: true)
+            .limit(to: pageSize)
+            .addSnapshotListener { [weak self] snapshot, error in
+                guard let self = self else { return }
+                
+                if let error = error {
+                    LoggingService.error("❌ CommentsViewModel: Error listening for comments: \(error.localizedDescription)", component: "Comments")
+                    self.error = "Failed to load comments: \(error.localizedDescription)"
+                    return
+                }
+                
+                guard let documents = snapshot?.documents else {
+                    LoggingService.warning("⚠️ CommentsViewModel: No documents in snapshot", component: "Comments")
+                    return
+                }
+                
+                LoggingService.debug("📥 CommentsViewModel: Received \(documents.count) comments", component: "Comments")
+                
+                self.comments = documents.compactMap { document in
+                    guard let comment = Comment(document: document) else {
+                        LoggingService.error("⚠️ CommentsViewModel: Failed to parse comment from document: \(document.documentID)", component: "Comments")
+                        return nil
+                    }
+                    return comment
+                }
+                
+                self.lastDocument = documents.last
+                self.hasMoreComments = documents.count >= self.pageSize
+                self.isLoading = false
+            }
+    }
+    
     deinit {
-        print("🧹 CommentsViewModel: Cleaning up")
+        LoggingService.debug("🧹 CommentsViewModel: Cleaning up", component: "Comments")
         listenerRegistration?.remove()
     }
 } 

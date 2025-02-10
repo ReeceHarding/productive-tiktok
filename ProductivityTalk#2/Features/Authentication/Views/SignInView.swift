@@ -4,6 +4,11 @@ struct SignInView: View {
     @StateObject private var viewModel = SignInViewModel()
     @State private var showSignUp = false
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
+    
+    // Haptic feedback generators
+    private let impactGenerator = UIImpactFeedbackGenerator(style: .medium)
+    private let notificationGenerator = UINotificationFeedbackGenerator()
     
     var body: some View {
         NavigationView {
@@ -21,18 +26,21 @@ struct SignInView: View {
                 
                 ScrollView {
                     VStack(spacing: 25) {
-                        // App Logo/Icon
+                        // App Logo/Icon with animation
                         Image(systemName: "brain.head.profile")
                             .resizable()
                             .scaledToFit()
                             .frame(width: 80, height: 80)
                             .foregroundColor(.blue)
                             .padding(.top, 40)
+                            .symbolEffect(.bounce, options: .repeating)
+                            .accessibilityLabel("App Logo")
                         
                         Text("Welcome Back")
                             .font(.title)
                             .fontWeight(.bold)
                             .padding(.bottom, 20)
+                            .accessibilityAddTraits(.isHeader)
                         
                         VStack(spacing: 20) {
                             CustomTextField(
@@ -43,6 +51,9 @@ struct SignInView: View {
                                 contentType: .emailAddress,
                                 keyboardType: .emailAddress
                             )
+                            .onChange(of: viewModel.email) { _ in
+                                impactGenerator.impactOccurred(intensity: 0.3)
+                            }
                             
                             CustomTextField(
                                 iconName: "lock",
@@ -51,11 +62,26 @@ struct SignInView: View {
                                 text: $viewModel.password,
                                 contentType: .password
                             )
+                            .onChange(of: viewModel.password) { _ in
+                                impactGenerator.impactOccurred(intensity: 0.3)
+                            }
                         }
                         .padding(.horizontal, 20)
                         
+                        // Validation Messages
+                        if !viewModel.validationMessage.isEmpty {
+                            Text(viewModel.validationMessage)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .padding(.horizontal, 20)
+                                .transition(.opacity)
+                        }
+                        
                         // Sign In Button
-                        Button(action: signIn) {
+                        Button(action: {
+                            impactGenerator.impactOccurred(intensity: 0.6)
+                            signIn()
+                        }) {
                             HStack {
                                 if viewModel.isLoading {
                                     ProgressView()
@@ -88,8 +114,36 @@ struct SignInView: View {
                         .padding(.horizontal, 20)
                         .padding(.top, 10)
                         
+                        // Biometric Login Button
+                        if viewModel.biometricType != .none {
+                            Button(action: {
+                                impactGenerator.impactOccurred(intensity: 0.6)
+                                Task {
+                                    await viewModel.authenticateWithBiometrics()
+                                }
+                            }) {
+                                HStack {
+                                    Image(systemName: viewModel.biometricType == .faceID ? "faceid" : "touchid")
+                                        .font(.system(size: 20))
+                                    Text("Sign in with \(viewModel.biometricType.description)")
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color(.systemBackground))
+                                .foregroundColor(.blue)
+                                .cornerRadius(12)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.blue, lineWidth: 1)
+                                )
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.top, 10)
+                        }
+                        
                         // Forgot Password Button
                         Button(action: { 
+                            impactGenerator.impactOccurred(intensity: 0.4)
                             Task {
                                 await viewModel.resetPassword()
                             }
@@ -101,7 +155,10 @@ struct SignInView: View {
                         .padding(.top, 5)
                         
                         // Sign Up Link
-                        Button(action: { showSignUp = true }) {
+                        Button(action: { 
+                            impactGenerator.impactOccurred(intensity: 0.5)
+                            showSignUp = true 
+                        }) {
                             HStack {
                                 Text("Don't have an account?")
                                     .foregroundColor(.gray)
@@ -121,14 +178,33 @@ struct SignInView: View {
                 SignUpView()
             }
             .alert("Error", isPresented: $viewModel.showError) {
-                Button("OK", role: .cancel) {}
+                Button("OK", role: .cancel) {
+                    notificationGenerator.notificationOccurred(.error)
+                }
             } message: {
                 Text(viewModel.errorMessage ?? "An unknown error occurred")
             }
+            .alert("Enable \(viewModel.biometricType.description)?", isPresented: $viewModel.showBiometricAlert) {
+                Button("Not Now", role: .cancel) {}
+                Button("Enable") {
+                    notificationGenerator.notificationOccurred(.success)
+                    viewModel.enableBiometricLogin()
+                }
+            } message: {
+                Text("Would you like to enable \(viewModel.biometricType.description) for faster sign in?")
+            }
             .alert("Password Reset", isPresented: $viewModel.showResetAlert) {
-                Button("OK", role: .cancel) {}
+                Button("OK", role: .cancel) {
+                    notificationGenerator.notificationOccurred(.success)
+                }
             } message: {
                 Text("If an account exists with this email, you will receive a password reset link.")
+            }
+            .onChange(of: scenePhase) { newPhase in
+                if newPhase == .active {
+                    notificationGenerator.prepare()
+                    impactGenerator.prepare()
+                }
             }
         }
     }

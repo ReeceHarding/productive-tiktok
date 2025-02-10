@@ -43,7 +43,7 @@ public struct VideoPlayerView: View {
                         }
                     )
             } else {
-                LoadingView(progress: $loadingProgress)
+                VideoLoadingView(progress: $loadingProgress)
                     .containerRelativeFrame([.horizontal, .vertical])
             }
             
@@ -193,7 +193,7 @@ private struct BufferingView: View {
     }
 }
 
-private struct LoadingView: View {
+private struct VideoLoadingView: View {
     @Binding var progress: Double
     
     var body: some View {

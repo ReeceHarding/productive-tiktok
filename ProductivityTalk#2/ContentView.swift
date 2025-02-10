@@ -16,7 +16,7 @@ struct ContentView: View {
     var body: some View {
         Group {
             if isLoading {
-                LoadingView()
+                SharedLoadingView("Initializing...")
             } else if authManager.isAuthenticated {
                 MainTabView()
             } else {
@@ -39,6 +39,8 @@ struct ContentView: View {
 
 // MARK: - Loading View
 private struct LoadingView: View {
+    let message: String
+    
     var body: some View {
         ZStack {
             // Background gradient
@@ -57,7 +59,7 @@ private struct LoadingView: View {
                     .progressViewStyle(CircularProgressViewStyle(tint: .blue))
                     .scaleEffect(1.5)
                 
-                Text("Loading...")
+                Text(message)
                     .font(.headline)
                     .foregroundColor(.secondary)
             }
@@ -133,14 +135,7 @@ struct MainTabView: View {
                 Color.black.opacity(0.3)
                     .edgesIgnoringSafeArea(.all)
                     .overlay {
-                        VStack(spacing: 20) {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                .scaleEffect(1.5)
-                            Text("Signing out...")
-                                .foregroundColor(.white)
-                                .font(.headline)
-                        }
+                        SharedLoadingView("Signing out...")
                     }
             }
         }

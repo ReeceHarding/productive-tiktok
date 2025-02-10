@@ -26,6 +26,7 @@
 		73F544782D5981A0006E9A84 /* GoogleAPIClientForREST_AIPlatformNotebooks in Frameworks */ = {isa = PBXBuildFile; productRef = 73F544772D5981A0006E9A84 /* GoogleAPIClientForREST_AIPlatformNotebooks */; };
 		73F5447A2D5981A0006E9A84 /* GoogleAPIClientForREST_APIGateway in Frameworks */ = {isa = PBXBuildFile; productRef = 73F544792D5981A0006E9A84 /* GoogleAPIClientForREST_APIGateway */; };
 		73F5447C2D5981A0006E9A84 /* GoogleAPIClientForREST_APIManagement in Frameworks */ = {isa = PBXBuildFile; productRef = 73F5447B2D5981A0006E9A84 /* GoogleAPIClientForREST_APIManagement */; };
+		73F545282D59DD1D006E9A84 /* LocalAuthentication.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 73F545272D59DD1D006E9A84 /* LocalAuthentication.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -52,24 +53,12 @@
 		73B33DD92D56F9B3001371C1 /* CoreHaptics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreHaptics.framework; path = System/Library/Frameworks/CoreHaptics.framework; sourceTree = SDKROOT; };
 		73B33DDB2D56F9BE001371C1 /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
 		73B33DE12D5703D7001371C1 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		73F545272D59DD1D006E9A84 /* LocalAuthentication.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = LocalAuthentication.framework; path = System/Library/Frameworks/LocalAuthentication.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
-
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		73F544972D59CA72006E9A84 /* Exceptions for "ProductivityTalk#2" folder in "ProductivityTalk#2" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				"ProductivityTalk-2-Info.plist",
-			);
-			target = 73B33CD32D56AEFD001371C1 /* ProductivityTalk#2 */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		73B33CD62D56AEFD001371C1 /* ProductivityTalk#2 */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				73F544972D59CA72006E9A84 /* Exceptions for "ProductivityTalk#2" folder in "ProductivityTalk#2" target */,
-			);
 			path = "ProductivityTalk#2";
 			sourceTree = "<group>";
 		};
@@ -98,6 +87,7 @@
 				73741BCA2D587C43006EBBD1 /* FirebaseStorage in Frameworks */,
 				73741BC62D587C43006EBBD1 /* FirebaseFunctions in Frameworks */,
 				73741BBA2D587C43006EBBD1 /* FirebaseAnalytics in Frameworks */,
+				73F545282D59DD1D006E9A84 /* LocalAuthentication.framework in Frameworks */,
 				73741BC02D587C43006EBBD1 /* FirebaseCrashlytics in Frameworks */,
 				73741BBE2D587C43006EBBD1 /* FirebaseCore in Frameworks */,
 				73F5446F2D5980ED006E9A84 /* GoogleSignInSwift in Frameworks */,
@@ -153,6 +143,7 @@
 		73B33D332D56B38E001371C1 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				73F545272D59DD1D006E9A84 /* LocalAuthentication.framework */,
 				73B33DE12D5703D7001371C1 /* AVFoundation.framework */,
 				73B33DDB2D56F9BE001371C1 /* AVKit.framework */,
 				73B33DD92D56F9B3001371C1 /* CoreHaptics.framework */,
@@ -490,6 +481,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "ProductivityTalk-2-Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to record videos for upload";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "We use Face ID to securely sign you in to your account";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to record audio with your videos";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to select videos for upload";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -523,6 +515,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "ProductivityTalk-2-Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to record videos for upload";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "We use Face ID to securely sign you in to your account";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to record audio with your videos";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to select videos for upload";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

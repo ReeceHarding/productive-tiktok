@@ -8,65 +8,70 @@ struct CommentsView: View {
     @FocusState private var isCommentFieldFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    
+    // Haptic feedback generators
+    private let impactGenerator = UIImpactFeedbackGenerator(style: .medium)
+    private let notificationGenerator = UINotificationFeedbackGenerator()
     
     init(video: Video) {
         self.video = video
         self._viewModel = StateObject(wrappedValue: CommentsViewModel(video: video))
+        LoggingService.debug("Initializing CommentsView for video: \(video.id)", component: "Comments")
     }
     
     var body: some View {
         ZStack {
-            // Background gradient
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color.blue.opacity(0.3),
-                    Color.purple.opacity(0.3)
-                ]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            // Background blur and overlay
+            Color.black.opacity(colorScheme == .dark ? 0.9 : 0.7)
+                .ignoresSafeArea()
             
             VStack(spacing: 0) {
                 // Header
                 HStack {
                     Text("Comments")
-                        .font(.title2)
-                        .fontWeight(.bold)
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.primary)
+                        .accessibilityAddTraits(.isHeader)
                     
                     if !viewModel.isLoading {
                         Text("(\(viewModel.comments.count))")
                             .foregroundStyle(.secondary)
                             .font(.headline)
+                            .accessibilityLabel("\(viewModel.comments.count) comments")
                     }
                     
                     Spacer()
                     
                     Button {
+                        impactGenerator.impactOccurred(intensity: 0.6)
                         dismiss()
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
+                        Image(systemName: "xmark")
                             .foregroundStyle(.secondary)
-                            .font(.title2)
+                            .font(.body.weight(.medium))
+                            .accessibilityLabel("Close comments")
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .padding(.top, 16)
-                .padding(.bottom, 8)
+                .padding(.bottom, 12)
                 
                 // Informational text with icon
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     Image(systemName: "brain.head.profile")
                         .foregroundStyle(.secondary)
-                        .font(.system(size: 18))
+                        .font(.system(size: 16))
                     Text("Tap the brain icon to save insights")
-                        .font(.subheadline)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
                 .frame(maxWidth: .infinity)
-                .background(Color.secondary.opacity(0.1))
+                .background(Color.secondary.opacity(0.15))
+                .accessibilityElement(children: .combine)
                 
                 Divider()
                     .background(Color.secondary.opacity(0.2))
@@ -74,98 +79,162 @@ struct CommentsView: View {
                 // Comments List with Loading and Empty States
                 Group {
                     if viewModel.isLoading {
-                        VStack(spacing: 16) {
-                            ProgressView()
-                                .scaleEffect(1.5)
-                            Text("Loading comments...")
-                                .foregroundStyle(.secondary)
-                                .font(.subheadline)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        SharedLoadingView("Loading comments...")
+                            .frame(maxHeight: .infinity)
                     } else if viewModel.comments.isEmpty {
-                        VStack(spacing: 20) {
-                            Image(systemName: "bubble.left.and.bubble.right")
-                                .font(.system(size: 48))
-                                .foregroundStyle(.secondary)
-                            Text("No comments yet")
-                                .font(.headline)
-                                .foregroundStyle(.secondary)
-                            Text("Be the first to start the conversation!")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        EmptyCommentsView()
+                            .frame(maxHeight: .infinity)
                     } else {
-                        ScrollView {
-                            LazyVStack(spacing: 20) {
-                                ForEach(viewModel.comments) { comment in
-                                    CommentCell(comment: comment) {
-                                        Task {
-                                            await viewModel.toggleSecondBrain(for: comment)
-                                        }
-                                    }
-                                    .padding(.horizontal, 20)
-                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        CommentsList(
+                            comments: viewModel.comments,
+                            onBrainTap: { comment in
+                                impactGenerator.impactOccurred(intensity: 0.5)
+                                Task {
+                                    await viewModel.toggleSecondBrain(for: comment)
                                 }
-                            }
-                            .padding(.vertical, 20)
-                        }
+                            },
+                            viewModel: viewModel
+                        )
                     }
                 }
+                .frame(maxWidth: .infinity)
                 
                 Divider()
                     .background(Color.secondary.opacity(0.2))
                 
                 // Comment Input
-                VStack(spacing: 8) {
-                    HStack(alignment: .center, spacing: 12) {
-                        TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(Color(.systemBackground))
-                            )
-                            .focused($isCommentFieldFocused)
-                            .frame(maxHeight: 100)
-                        
-                        Button {
-                            Task {
-                                await viewModel.addComment()
-                                isCommentFieldFocused = false
-                            }
-                        } label: {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 32))
-                                .symbolRenderingMode(.hierarchical)
-                                .foregroundColor(viewModel.newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .blue)
+                CommentInputView(
+                    text: $viewModel.newCommentText,
+                    onSubmit: {
+                        impactGenerator.impactOccurred(intensity: 0.7)
+                        Task {
+                            await viewModel.addComment()
                         }
-                        .disabled(viewModel.newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    
-                    if !viewModel.newCommentText.isEmpty {
-                        Text("\(viewModel.newCommentText.count)/1000")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                            .padding(.horizontal, 4)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color(.systemBackground).opacity(0.8))
+                )
             }
+            .background(Color(colorScheme == .dark ? .black : .systemBackground).opacity(0.95))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .frame(maxHeight: UIScreen.main.bounds.height * 0.85)
         }
-        .background(Color(.secondarySystemBackground))
         .alert("Error", isPresented: .constant(viewModel.error != nil)) {
             Button("OK") {
+                notificationGenerator.notificationOccurred(.error)
                 viewModel.error = nil
             }
         } message: {
             if let error = viewModel.error {
                 Text(error)
             }
+        }
+        .onChange(of: scenePhase) { newPhase in
+            if newPhase == .active {
+                notificationGenerator.prepare()
+                impactGenerator.prepare()
+            }
+        }
+    }
+}
+
+// MARK: - Supporting Views
+
+private struct EmptyCommentsView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 44))
+                .foregroundStyle(.secondary)
+                .symbolEffect(.bounce)
+            Text("No comments yet")
+                .font(.callout)
+                .fontWeight(.medium)
+                .foregroundStyle(.secondary)
+            Text("Be the first to start the conversation!")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct CommentsList: View {
+    let comments: [Comment]
+    let onBrainTap: (Comment) -> Void
+    @ObservedObject var viewModel: CommentsViewModel
+    @State private var isRefreshing = false
+    
+    var body: some View {
+        ScrollView {
+            SharedRefreshControl(isRefreshing: $isRefreshing) {
+                Task {
+                    await viewModel.refreshComments()
+                    isRefreshing = false
+                }
+            }
+            
+            LazyVStack(spacing: 16) {
+                ForEach(comments) { comment in
+                    CommentCell(comment: comment) {
+                        onBrainTap(comment)
+                    }
+                    .padding(.horizontal, 16)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+                
+                if viewModel.hasMoreComments {
+                    ProgressView()
+                        .padding()
+                        .onAppear {
+                            Task {
+                                await viewModel.loadMoreComments()
+                            }
+                        }
+                }
+            }
+            .padding(.vertical, 16)
+        }
+        .scrollDismissesKeyboard(.immediately)
+        .accessibilityLabel("Comments list")
+    }
+}
+
+private struct CommentInputView: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+    let onSubmit: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .background(Color.secondary.opacity(0.2))
+            
+            // Input Area
+            VStack(spacing: 16) {
+                // Text Input
+                TextField("Add a comment...", text: $text, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.body)
+                    .foregroundColor(.primary)
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 24)
+                            .fill(Color(colorScheme == .dark ? .systemGray6 : .systemGray6))
+                    )
+                    .focused($isFocused)
+                    .frame(minHeight: 44)
+                    .accessibilityLabel("Comment input field")
+                
+                // Bottom Area with Home Indicator
+                Rectangle()
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(width: 134, height: 5)
+                    .cornerRadius(2.5)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
         }
     }
 }
@@ -177,9 +246,9 @@ struct CommentCell: View {
     @State private var showFullText = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             // User Info
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 if let imageURL = comment.userProfileImageURL, let url = URL(string: imageURL) {
                     AsyncImage(url: url) { image in
                         image
@@ -189,21 +258,21 @@ struct CommentCell: View {
                         Image(systemName: "person.circle.fill")
                             .foregroundStyle(.secondary)
                     }
-                    .frame(width: 40, height: 40)
+                    .frame(width: 32, height: 32)
                     .clipShape(Circle())
                 } else {
                     Image(systemName: "person.circle.fill")
                         .foregroundStyle(.secondary)
-                        .font(.system(size: 40))
+                        .font(.system(size: 32))
                 }
                 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(comment.userName ?? "Anonymous")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                        .font(.footnote)
+                        .fontWeight(.medium)
                     
                     Text(timeAgo(from: comment.timestamp))
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
                 
@@ -213,6 +282,7 @@ struct CommentCell: View {
                     Image(systemName: comment.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile")
                         .foregroundColor(comment.isInSecondBrain ? .blue : .gray)
                         .font(.system(size: 24))
+                        .frame(width: 32, height: 32)
                 }
                 .buttonStyle(.plain)
             }
@@ -220,7 +290,7 @@ struct CommentCell: View {
             // Comment Text
             if comment.text.count > 150 && !showFullText {
                 Text(comment.text.prefix(150) + "...")
-                    .font(.body)
+                    .font(.callout)
                     .lineSpacing(4)
                     .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture {
@@ -230,7 +300,7 @@ struct CommentCell: View {
                     }
             } else {
                 Text(comment.text)
-                    .font(.body)
+                    .font(.callout)
                     .lineSpacing(4)
                     .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture {
@@ -242,12 +312,10 @@ struct CommentCell: View {
                     }
             }
         }
-        .padding(20)
+        .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1),
-                       radius: 10, x: 0, y: 4)
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(colorScheme == .dark ? .systemGray6 : .systemBackground))
         )
     }
     
