@@ -54,9 +54,22 @@
 		73B33DE12D5703D7001371C1 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		73F544972D59CA72006E9A84 /* Exceptions for "ProductivityTalk#2" folder in "ProductivityTalk#2" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"ProductivityTalk-2-Info.plist",
+			);
+			target = 73B33CD32D56AEFD001371C1 /* ProductivityTalk#2 */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		73B33CD62D56AEFD001371C1 /* ProductivityTalk#2 */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				73F544972D59CA72006E9A84 /* Exceptions for "ProductivityTalk#2" folder in "ProductivityTalk#2" target */,
+			);
 			path = "ProductivityTalk#2";
 			sourceTree = "<group>";
 		};
@@ -475,6 +488,7 @@
 				DEVELOPMENT_TEAM = 7T46S6WCV4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "ProductivityTalk-2-Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to record videos for upload";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to record audio with your videos";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to select videos for upload";
@@ -507,6 +521,7 @@
 				DEVELOPMENT_TEAM = 7T46S6WCV4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "ProductivityTalk-2-Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to record videos for upload";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to record audio with your videos";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to select videos for upload";

@@ -84,13 +84,6 @@ private struct VideoFeedScrollView: View {
                         .id(video.id)
                         .containerRelativeFrame([.horizontal, .vertical])
                         .frame(height: UIScreen.main.bounds.height)
-                        .overlay(alignment: .topTrailing) {
-                            VideoControlButtons(
-                                video: video,
-                                selectedVideo: $selectedVideo,
-                                showingSchedulingView: $showingSchedulingView
-                            )
-                        }
                 }
             }
             .scrollTargetLayout()
@@ -99,30 +92,6 @@ private struct VideoFeedScrollView: View {
         .scrollTargetBehavior(.paging)
         .scrollIndicators(.hidden)
         .ignoresSafeArea()
-    }
-}
-
-// MARK: - VideoControlButtons
-private struct VideoControlButtons: View {
-    let video: Video
-    @Binding var selectedVideo: Video?
-    @Binding var showingSchedulingView: Bool
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            Button(action: {
-                selectedVideo = video
-                showingSchedulingView = true
-            }) {
-                Image(systemName: "calendar.badge.plus")
-                    .font(.title2)
-                    .foregroundColor(.white)
-                    .shadow(radius: 2)
-            }
-            .padding(.trailing, 8)
-        }
-        .padding(.top, 60)
-        .padding(.trailing)
     }
 }
 

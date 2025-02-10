@@ -8,6 +8,7 @@
 import SwiftUI
 import FirebaseCore
 import UIKit
+import GoogleSignIn
 
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
@@ -16,6 +17,13 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         FirebaseConfig.shared.configure()
         print("✅ App: Firebase configuration completed")
         return true
+    }
+    
+    func application(_ app: UIApplication,
+                    open url: URL,
+                    options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        print("📱 App: Handling URL: \(url)")
+        return GIDSignIn.sharedInstance.handle(url)
     }
 }
 

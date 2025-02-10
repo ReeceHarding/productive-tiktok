@@ -44,12 +44,16 @@ public class VideoPlayerViewModel: ObservableObject {
     @Published public var brainCount: Int = 0
     @Published public var showControls = true
     @Published public var isPlaying = false
+    @Published public var isBuffering = false
+    @Published public var loadingProgress: Double = 0
     
     private var observers: [NSKeyValueObservation] = []
     private var timeObserverToken: Any?
     private var deinitHandler: (() -> Void)?
     private let firestore = Firestore.firestore()
     private var preloadedPlayers: [String: AVPlayer] = [:]
+    private var bufferingObserver: NSKeyValueObservation?
+    private var loadingObserver: NSKeyValueObservation?
     
     // Used to ensure we don't double fade
     private var fadeTask: Task<Void, Never>?
@@ -57,6 +61,8 @@ public class VideoPlayerViewModel: ObservableObject {
     
     // Additional concurrency
     private var isCleaningUp = false
+    private var retryCount = 0
+    private let maxRetries = 3
     
     public init(video: Video) {
         self.video = video
@@ -84,6 +90,19 @@ public class VideoPlayerViewModel: ObservableObject {
             playerCopy?.pause()
             playerCopy?.replaceCurrentItem(with: nil)
         }
+    }
+    
+    public func retryLoading() async {
+        guard retryCount < maxRetries else {
+            LoggingService.error("Max retries reached for video \(video.id)", component: "Player")
+            error = "Unable to load video after multiple attempts"
+            return
+        }
+        
+        retryCount += 1
+        LoggingService.debug("Retrying video load attempt \(retryCount) for \(video.id)", component: "Player")
+        error = nil
+        await loadVideo()
     }
     
     private func checkSecondBrainStatus() async throws {
@@ -119,6 +138,12 @@ public class VideoPlayerViewModel: ObservableObject {
         observers.forEach { $0.invalidate() }
         observers.removeAll()
         
+        bufferingObserver?.invalidate()
+        bufferingObserver = nil
+        
+        loadingObserver?.invalidate()
+        loadingObserver = nil
+        
         // Remove time observer
         if let token = timeObserverToken, let player = player {
             player.removeTimeObserver(token)
@@ -151,6 +176,8 @@ public class VideoPlayerViewModel: ObservableObject {
     public func loadVideo() async {
         LoggingService.video("Starting loadVideo for \(video.id)", component: "Player")
         isLoading = true
+        loadingProgress = 0
+        error = nil
         
         // Check if we have a preloaded player first
         if let preloadedPlayer = preloadedPlayers[video.id] {
@@ -162,6 +189,7 @@ public class VideoPlayerViewModel: ObservableObject {
         
         guard let url = URL(string: video.videoURL) else {
             LoggingService.error("❌ Invalid URL for \(video.id)", component: "Player")
+            error = "Invalid video URL"
             isLoading = false
             return
         }
@@ -176,11 +204,12 @@ public class VideoPlayerViewModel: ObservableObject {
             try await setupNewPlayer(with: asset)
         } catch {
             LoggingService.error("Failed to setup player: \(error.localizedDescription)", component: "Player")
+            self.error = "Failed to load video: \(error.localizedDescription)"
             isLoading = false
         }
     }
     
-    private func setupNewPlayer(with asset: AVAsset) async {
+    private func setupNewPlayer(with asset: AVAsset) async throws {
         LoggingService.video("Setting up new player for \(video.id)", component: "Player")
         
         do {
@@ -189,12 +218,33 @@ public class VideoPlayerViewModel: ObservableObject {
             
             guard playable else {
                 LoggingService.error("Asset not playable for \(video.id)", component: "Player")
-                await MainActor.run { isLoading = false }
+                await MainActor.run { 
+                    error = "Video format not supported"
+                    isLoading = false 
+                }
                 return
             }
             
+            // Load duration to update progress
+            let duration = try await asset.load(.duration)
+            let durationInSeconds = CMTimeGetSeconds(duration)
+            
             let playerItem = AVPlayerItem(asset: asset)
             playerItem.preferredForwardBufferDuration = 10
+            
+            // Observe loading progress
+            loadingObserver = playerItem.observe(\.loadedTimeRanges) { [weak self] item, _ in
+                guard let self = self else { return }
+                let loadedRanges = item.loadedTimeRanges
+                if let timeRange = loadedRanges.first?.timeRangeValue {
+                    let loadedDuration = CMTimeGetSeconds(timeRange.duration)
+                    let progress = loadedDuration / durationInSeconds
+                    Task { @MainActor in
+                        self.loadingProgress = max(0, min(1, progress))
+                    }
+                }
+            }
+            
             let player = AVPlayer(playerItem: playerItem)
             
             await MainActor.run {
@@ -202,9 +252,7 @@ public class VideoPlayerViewModel: ObservableObject {
             }
         } catch {
             LoggingService.error("Failed to setup player: \(error.localizedDescription)", component: "Player")
-            await MainActor.run {
-                isLoading = false
-            }
+            throw error
         }
     }
     
@@ -232,6 +280,13 @@ public class VideoPlayerViewModel: ObservableObject {
             object: player.currentItem
         )
         
+        // Observe buffering state
+        bufferingObserver = player.observe(\.timeControlStatus) { [weak self] player, _ in
+            Task { @MainActor in
+                self?.isBuffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+            }
+        }
+        
         LoggingService.video("✅ Player setup complete for \(video.id)", component: "Player")
         isLoading = false
     }
@@ -248,7 +303,7 @@ public class VideoPlayerViewModel: ObservableObject {
                     LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                     // Start buffering only when player is ready
                     do {
-                        if await player.preroll(atRate: 1.0) {
+                        if try await player.preroll(atRate: 1.0) {
                             LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
                         } else {
                             LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")

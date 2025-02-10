@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import os.log
+import UIKit
 
 // Add logging for better debugging
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Scheduling")
@@ -20,6 +21,12 @@ final class SchedulingViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published private(set) var eventProposal: EventProposal?
     @Published private(set) var availableTimeSlots: [DateInterval] = []
+    
+    // Helper to get the presenting view controller
+    private var presentingViewController: UIViewController? {
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        return scene?.windows.first?.rootViewController
+    }
     
     // MARK: - Public Methods
     
@@ -41,6 +48,16 @@ final class SchedulingViewModel: ObservableObject {
      */
     func findAvailableTimeSlots(forDuration durationMinutes: Int) async throws {
         logger.debug("Finding available time slots for \(durationMinutes) minutes")
+        
+        guard let presentingVC = presentingViewController else {
+            throw NSError(domain: "SchedulingViewModel",
+                         code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "No presenting view controller found"])
+        }
+        
+        // Ensure we're authorized before proceeding
+        try await calendarManager.ensureAuthorized(presentingViewController: presentingVC)
+        
         availableTimeSlots = try await calendarManager.findFreeTime(desiredDurationInMinutes: durationMinutes)
     }
     
@@ -49,6 +66,16 @@ final class SchedulingViewModel: ObservableObject {
      */
     func scheduleEvent(title: String, description: String, startTime: Date, durationMinutes: Int) async throws {
         logger.debug("Scheduling event: \(title) at \(startTime)")
+        
+        guard let presentingVC = presentingViewController else {
+            throw NSError(domain: "SchedulingViewModel",
+                         code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "No presenting view controller found"])
+        }
+        
+        // Ensure we're authorized before proceeding
+        try await calendarManager.ensureAuthorized(presentingViewController: presentingVC)
+        
         let eventId = try await calendarManager.createCalendarEvent(
             title: title,
             description: description,
