@@ -167,7 +167,7 @@ public class VideoPlayerViewModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             let videoId = self.video.id
-            self.deinitHandler?()
+            await self.deinitHandler?()
             self.cleanup() // Call cleanup on MainActor
             LoggingService.debug("VideoPlayerViewModel deinit for video \(videoId)", component: "Player")
         }
@@ -337,9 +337,8 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private func updateWatchTime() async {
         guard !isCleaningUp else { return }
-        if isPlaying, let currentTime = player?.currentTime().seconds {
-            LoggingService.debug("[PlayerVM] watchTime = \(currentTime) (video: \(video.id))", component: "Player")
-        }
+        // Removed watchTime logging as it was too verbose
+        // We still keep the method for future use if needed
     }
     
     @objc private func playerItemDidReachEnd() {
@@ -487,6 +486,16 @@ public class VideoPlayerViewModel: ObservableObject {
         isPlaying = true
         VideoPlayerViewModel.currentlyPlayingViewModel = self
         
+        // Increment view count
+        do {
+            try await firestore.collection("videos").document(video.id).updateData([
+                "viewCount": FieldValue.increment(Int64(1))
+            ])
+            LoggingService.success("Incremented view count for video \(video.id)", component: "PlayerVM")
+        } catch {
+            LoggingService.error("Failed to increment view count: \(error)", component: "PlayerVM")
+        }
+        
         // Fade in audio
         let fadeTime = 0.3
         let steps = 5
@@ -565,7 +574,7 @@ public class VideoPlayerViewModel: ObservableObject {
                 }
                 
                 // Now that player is ready, attempt preroll
-                if await player.preroll(atRate: 1.0) {
+                if try await player.preroll(atRate: 1.0) {
                     // Store in preloaded players
                     preloadedPlayers[video.id] = player
                     LoggingService.video("✅ Successfully preloaded video \(video.id)", component: "Player")
@@ -636,7 +645,7 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private func prerollIfNeeded() async {
         guard let player = player else { return }
-        await player.preroll(atRate: 1.0)
+        try? await player.preroll(atRate: 1.0)
         
         await MainActor.run {
             LoggingService.video("Preroll complete for \(video.id)", component: "Player")

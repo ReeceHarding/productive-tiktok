@@ -8,19 +8,21 @@ class FirebaseConfig {
     static let shared = FirebaseConfig()
     
     private init() {
-        print("🔥 Firebase: Initializing configuration")
+        LoggingService.firebase("Initializing Firebase configuration", component: "Config")
     }
     
     func configure() {
+        LoggingService.integration("Starting Firebase configuration", component: "Config")
+        
         // Configure Firebase
         FirebaseApp.configure()
-        print("✅ Firebase: Successfully configured Firebase")
+        LoggingService.success("Firebase core configuration successful", component: "Config")
         
         // Enable Firestore debug logging for development
         #if DEBUG
         let db = Firestore.firestore()
         Firestore.enableLogging(true)
-        print("🔍 Firebase: Enabled Firestore debug logging")
+        LoggingService.debug("Enabled Firestore debug logging", component: "Config")
         
         // Configure cache settings
         let settings = db.settings
@@ -30,28 +32,29 @@ class FirebaseConfig {
         settings.isSSLEnabled = true
         
         db.settings = settings
-        print("✅ Firebase: Configured Firestore with persistence enabled")
-        print("📦 Firebase: Cache size set to 100MB")
+        LoggingService.success("Configured Firestore with persistence (100MB cache)", component: "Config")
         #endif
+        
+        LoggingService.success("Firebase configuration completed successfully", component: "Config")
     }
     
     // MARK: - Collection References
     
     var usersCollection: CollectionReference {
         let collection = Firestore.firestore().collection("users")
-        print("📚 Firebase: Accessing users collection")
+        LoggingService.firebase("Accessing users collection", component: "Config")
         return collection
     }
     
     var videosCollection: CollectionReference {
         let collection = Firestore.firestore().collection("videos")
-        print("📚 Firebase: Accessing videos collection")
+        LoggingService.firebase("Accessing videos collection", component: "Config")
         return collection
     }
     
     func secondBrainCollection(for userId: String) -> CollectionReference {
         let collection = usersCollection.document(userId).collection("secondBrain")
-        print("📚 Firebase: Accessing secondBrain collection for user: \(userId)")
+        LoggingService.firebase("Accessing secondBrain collection for user: \(userId)", component: "Config")
         return collection
     }
     
@@ -73,5 +76,14 @@ class FirebaseConfig {
         let ref = Storage.storage().reference().child("profile_pictures/\(userId).jpg")
         LoggingService.storage("Creating profile picture storage reference - path: profile_pictures/\(userId).jpg", component: "Config")
         return ref
+    }
+    
+    // MARK: - Error Handling
+    
+    func handleFirebaseError(_ error: Error, component: String) {
+        LoggingService.error("Firebase error: \(error.localizedDescription)", component: component)
+        if let nsError = error as NSError? {
+            LoggingService.debug("Error details - Domain: \(nsError.domain), Code: \(nsError.code)", component: component)
+        }
     }
 } 

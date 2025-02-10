@@ -13,16 +13,19 @@ import GoogleSignIn
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
-        print("📱 App: Application did finish launching")
+        LoggingService.info("Application launching", component: "AppDelegate")
+        
+        // Configure Firebase
         FirebaseConfig.shared.configure()
-        print("✅ App: Firebase configuration completed")
+        LoggingService.success("Application launch completed", component: "AppDelegate")
+        
         return true
     }
     
     func application(_ app: UIApplication,
                     open url: URL,
                     options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        print("📱 App: Handling URL: \(url)")
+        LoggingService.debug("Handling URL: \(url.absoluteString)", component: "AppDelegate")
         return GIDSignIn.sharedInstance.handle(url)
     }
 }
@@ -33,12 +36,19 @@ struct ProductivityTalk_2App: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     
     init() {
-        print("🚀 App: Initializing ProductivityTalk#2")
+        LoggingService.info("Initializing ProductivityTalk#2", component: "App")
+        
+        #if DEBUG
+        LoggingService.debug("Running in DEBUG configuration", component: "App")
+        #endif
     }
     
     var body: some Scene {
         WindowGroup {
-            ContentView()  // Changed from AuthenticationView to ContentView
+            ContentView()
+                .onAppear {
+                    LoggingService.success("Main ContentView appeared", component: "App")
+                }
         }
     }
 }

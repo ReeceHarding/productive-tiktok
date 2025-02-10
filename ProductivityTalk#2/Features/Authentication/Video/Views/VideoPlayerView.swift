@@ -75,13 +75,18 @@ public struct VideoPlayerView: View {
             }
         }
         .background(Color.black)
+        .task {
+            if !viewModel.isLoading && viewModel.player == nil {
+                await viewModel.loadVideo()
+            }
+        }
         .onAppear {
             LoggingService.video("Video view appeared for \(video.id)", component: "Player")
             isVisible = true
-            if !viewModel.isLoading {
-                Task {
-                    await viewModel.play()
-                }
+        }
+        .task(id: isVisible) {
+            if isVisible && !viewModel.isLoading {
+                await viewModel.play()
             }
         }
         .onDisappear {
@@ -92,9 +97,7 @@ public struct VideoPlayerView: View {
             }
         }
         .onChange(of: viewModel.loadingProgress) { _, newProgress in
-            withAnimation {
-                loadingProgress = newProgress
-            }
+            loadingProgress = newProgress
         }
         .onChange(of: viewModel.isLoading) { _, isLoading in
             if !isLoading && isVisible {
@@ -126,34 +129,6 @@ public struct VideoPlayerView: View {
                     errorMessage = "Failed to save to Second Brain"
                     showError = true
                 }
-            }
-        }
-        .task {
-            if !viewModel.isLoading && viewModel.player == nil {
-                await viewModel.loadVideo()
-            }
-        }
-        .onChange(of: video.videoURL) { _, newURL in
-            if !newURL.isEmpty {
-                Task {
-                    await viewModel.loadVideo()
-                }
-            }
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            switch newPhase {
-            case .active:
-                if isVisible {
-                    Task {
-                        await viewModel.play()
-                    }
-                }
-            case .inactive, .background:
-                Task {
-                    await viewModel.pause()
-                }
-            @unknown default:
-                break
             }
         }
         .sheet(isPresented: $showComments) {

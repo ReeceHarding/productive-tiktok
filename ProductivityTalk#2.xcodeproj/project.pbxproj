@@ -480,6 +480,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "ProductivityTalk-2-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = BrainBoost;
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to record videos for upload";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "We use Face ID to securely sign you in to your account";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to record audio with your videos";
@@ -514,6 +515,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "ProductivityTalk-2-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = BrainBoost;
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to record videos for upload";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "We use Face ID to securely sign you in to your account";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need access to your microphone to record audio with your videos";

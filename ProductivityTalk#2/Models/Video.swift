@@ -3,6 +3,7 @@ import FirebaseFirestore
 
 public enum VideoProcessingStatus: String, Codable {
     case uploading = "uploading"
+    case processing = "processing"
     case ready = "ready"
     case error = "error"
 }
@@ -20,6 +21,7 @@ public struct Video: Identifiable, Codable {
     public var saveCount: Int
     public var commentCount: Int
     public var brainCount: Int
+    public var viewCount: Int
     public var processingStatus: VideoProcessingStatus
     public var transcript: String?
     public var extractedQuotes: [String]?
@@ -45,6 +47,7 @@ public struct Video: Identifiable, Codable {
         case saveCount
         case commentCount
         case brainCount
+        case viewCount
         case ownerUsername
         case ownerProfilePicURL
         case processingStatus
@@ -92,6 +95,7 @@ public struct Video: Identifiable, Codable {
         self.saveCount = (data["saveCount"] as? Int) ?? 0
         self.commentCount = (data["commentCount"] as? Int) ?? 0
         self.brainCount = (data["brainCount"] as? Int) ?? 0
+        self.viewCount = (data["viewCount"] as? Int) ?? 0
         self.ownerUsername = ownerUsername
         self.ownerProfilePicURL = data["ownerProfilePicURL"] as? String
         self.processingStatus = processingStatus
@@ -140,6 +144,7 @@ public struct Video: Identifiable, Codable {
         self.saveCount = 0
         self.commentCount = 0
         self.brainCount = 0
+        self.viewCount = 0
         self.ownerUsername = ownerUsername
         self.ownerProfilePicURL = ownerProfilePicURL
         self.processingStatus = .uploading
@@ -167,6 +172,7 @@ public struct Video: Identifiable, Codable {
             "saveCount": saveCount,
             "commentCount": commentCount,
             "brainCount": brainCount,
+            "viewCount": viewCount,
             "ownerUsername": ownerUsername,
             "processingStatus": processingStatus.rawValue
         ]

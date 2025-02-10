@@ -88,6 +88,9 @@ struct SignUpView: View {
                             )
                             .onChange(of: viewModel.username) { _ in
                                 impactGenerator.impactOccurred(intensity: 0.3)
+                                Task { @MainActor in
+                                    viewModel.updateValidation()
+                                }
                             }
                             
                             CustomTextField(
@@ -99,6 +102,9 @@ struct SignUpView: View {
                             )
                             .onChange(of: viewModel.password) { _ in
                                 impactGenerator.impactOccurred(intensity: 0.3)
+                                Task { @MainActor in
+                                    viewModel.updateValidation()
+                                }
                             }
                             
                             CustomTextField(
@@ -110,6 +116,9 @@ struct SignUpView: View {
                             )
                             .onChange(of: viewModel.confirmPassword) { _ in
                                 impactGenerator.impactOccurred(intensity: 0.3)
+                                Task { @MainActor in
+                                    viewModel.updateValidation()
+                                }
                             }
                         }
                         .padding(.horizontal, 20)
@@ -196,6 +205,11 @@ struct SignUpView: View {
             }
             .fullScreenCover(isPresented: $viewModel.isAuthenticated) {
                 MainTabView()
+                    .overlay {
+                        if !OnboardingState.load().hasCompletedOnboarding {
+                            OnboardingView(viewModel: OnboardingViewModel())
+                        }
+                    }
             }
             .onChange(of: scenePhase) { newPhase in
                 if newPhase == .active {

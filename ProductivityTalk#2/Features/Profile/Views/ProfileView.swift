@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UIKit
 
 // MARK: - Profile View
 struct ProfileView: View {
@@ -8,143 +9,202 @@ struct ProfileView: View {
     @State private var isRefreshing = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var authManager = AuthenticationManager.shared
     
     // Haptic feedback generators
     private let impactGenerator = UIImpactFeedbackGenerator(style: .medium)
     private let notificationGenerator = UINotificationFeedbackGenerator()
     
-    private let gridColumns = [
-        GridItem(.flexible()),
-        GridItem(.flexible())
-    ]
-    
     var body: some View {
         NavigationView {
-            ZStack {
-                // Background gradient
-                LinearGradient(
-                    gradient: Gradient(colors: [
-                        Color.blue.opacity(0.3),
-                        Color.purple.opacity(0.3)
-                    ]),
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
-                
-                if viewModel.isLoading && viewModel.user == nil {
-                    SharedLoadingView("Loading profile...")
+            Group {
+                if !authManager.isAuthenticated {
+                    UnauthenticatedProfileView(showSignInView: showSignInView)
                 } else {
-                    ScrollView {
-                        SharedRefreshControl(isRefreshing: $isRefreshing) {
-                            Task {
-                                await viewModel.loadUserData()
-                                isRefreshing = false
-                            }
-                        }
-                        
-                        VStack(spacing: 24) {
-                            // Profile Header
-                            ProfileHeaderView(viewModel: viewModel)
-                                .padding()
-                                .background(
-                                    RoundedRectangle(cornerRadius: 20)
-                                        .fill(Color(.systemBackground).opacity(0.8))
-                                        .shadow(radius: 5)
-                                )
-                                .padding()
-                            
-                            // Statistics Grid
-                            if let user = viewModel.user {
-                                LazyVGrid(columns: gridColumns, spacing: 16) {
-                                    SharedStatisticCard(
-                                        title: "Videos",
-                                        value: "\(user.totalVideosUploaded)",
-                                        icon: "video.fill",
-                                        color: .blue
-                                    )
-                                    
-                                    SharedStatisticCard(
-                                        title: "Views",
-                                        value: formatNumber(user.totalVideoViews),
-                                        icon: "eye.fill",
-                                        color: .green
-                                    )
-                                    
-                                    SharedStatisticCard(
-                                        title: "Second Brain",
-                                        value: "\(user.totalSecondBrainSaves)",
-                                        icon: "brain.head.profile",
-                                        color: .purple
-                                    )
-                                    
-                                    SharedStatisticCard(
-                                        title: "Engagement",
-                                        value: String(format: "%.1f%%", user.videoEngagementRate * 100),
-                                        icon: "chart.line.uptrend.xyaxis",
-                                        color: .orange
-                                    )
-                                }
-                                .padding(.horizontal)
-                                .transition(.opacity)
-                            }
-                        }
-                    }
-                    .refreshable {
-                        await viewModel.loadUserData()
+                    AuthenticatedProfileView(
+                        viewModel: viewModel,
+                        isRefreshing: $isRefreshing,
+                        showSignOutAlert: $showSignOutAlert
+                    )
+                }
+            }
+        }
+        .alert("Sign Out", isPresented: $showSignOutAlert) {
+            signOutAlert
+        }
+        .onAppear {
+            LoggingService.debug("ProfileView appeared, isAuthenticated: \(authManager.isAuthenticated)", component: "Profile")
+            if authManager.isAuthenticated {
+                Task {
+                    await viewModel.loadUserData()
+                }
+            }
+        }
+    }
+    
+    private func showSignInView() {
+        impactGenerator.impactOccurred(intensity: 0.5)
+        // Handle navigation to sign in
+    }
+    
+    private var signOutAlert: some View {
+        Group {
+            Button("Cancel", role: .cancel) { }
+            Button("Sign Out", role: .destructive) {
+                Task {
+                    do {
+                        try await AuthenticationManager.shared.signOut()
+                    } catch {
+                        LoggingService.error("Error signing out: \(error)", component: "Profile")
                     }
                 }
             }
-            .navigationTitle("Profile")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        impactGenerator.impactOccurred(intensity: 0.6)
-                        showSignOutAlert = true
-                    }) {
-                        Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
-                            .foregroundColor(.red)
-                    }
-                    .accessibilityLabel("Sign out of your account")
+        }
+    }
+}
+
+// MARK: - Unauthenticated Profile View
+private struct UnauthenticatedProfileView: View {
+    let showSignInView: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Please sign in to view your profile")
+                .font(.headline)
+                .foregroundColor(.secondary)
+            
+            NavigationLink(destination: SignInView()) {
+                Text("Sign In")
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(
+                        LinearGradient(
+                            gradient: Gradient(colors: [.blue, .purple]),
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+}
+
+// MARK: - Authenticated Profile View
+private struct AuthenticatedProfileView: View {
+    @ObservedObject var viewModel: ProfileViewModel
+    @Binding var isRefreshing: Bool
+    @Binding var showSignOutAlert: Bool
+    
+    private let impactGenerator = UIImpactFeedbackGenerator(style: .medium)
+    private let gridColumns = [GridItem(.flexible()), GridItem(.flexible())]
+    
+    var body: some View {
+        ZStack {
+            backgroundGradient
+            
+            if viewModel.isLoading && viewModel.user == nil {
+                SharedLoadingView("Loading profile...")
+            } else {
+                mainContent
+            }
+        }
+        .navigationTitle("Profile")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                signOutButton
+            }
+        }
+    }
+    
+    private var backgroundGradient: some View {
+        LinearGradient(
+            gradient: Gradient(colors: [
+                Color.blue.opacity(0.3),
+                Color.purple.opacity(0.3)
+            ]),
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+    
+    private var mainContent: some View {
+        ScrollView {
+            SharedRefreshControl(isRefreshing: $isRefreshing) {
+                Task {
+                    await viewModel.loadUserData()
+                    isRefreshing = false
                 }
             }
-            .alert("Sign Out", isPresented: $showSignOutAlert) {
-                Button("Cancel", role: .cancel) {
-                    notificationGenerator.notificationOccurred(.warning)
-                }
-                Button("Sign Out", role: .destructive) {
-                    notificationGenerator.notificationOccurred(.success)
-                    Task {
-                        await viewModel.signOut()
-                    }
-                }
-            } message: {
-                Text("Are you sure you want to sign out?")
-            }
-            .sheet(isPresented: $viewModel.showEditProfile) {
-                EditProfileView(viewModel: viewModel)
-            }
-            .task {
-                notificationGenerator.prepare()
-                impactGenerator.prepare()
-                await viewModel.loadUserData()
-            }
-            .alert("Error", isPresented: .constant(viewModel.error != nil)) {
-                Button("OK") {
-                    notificationGenerator.notificationOccurred(.error)
-                    viewModel.clearError()
-                }
-            } message: {
-                if let error = viewModel.error {
-                    Text(error)
+            
+            VStack(spacing: 24) {
+                ProfileHeaderView(viewModel: viewModel)
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(Color(.systemBackground).opacity(0.8))
+                            .shadow(radius: 5)
+                    )
+                    .padding()
+                
+                if let user = viewModel.user {
+                    statisticsGrid(for: user)
                 }
             }
-            .onChange(of: scenePhase) { newPhase in
-                if newPhase == .active {
-                    notificationGenerator.prepare()
-                    impactGenerator.prepare()
-                }
-            }
+        }
+        .refreshable {
+            isRefreshing = true
+            await viewModel.loadUserData()
+            isRefreshing = false
+        }
+    }
+    
+    private func statisticsGrid(for user: AppUser) -> some View {
+        LazyVGrid(columns: gridColumns, spacing: 16) {
+            SharedStatisticCard(
+                title: "Videos",
+                value: "\(user.totalVideosUploaded)",
+                icon: "video.fill",
+                color: .blue
+            )
+            
+            SharedStatisticCard(
+                title: "Views",
+                value: formatNumber(user.totalVideoViews),
+                icon: "eye.fill",
+                color: .green
+            )
+            
+            SharedStatisticCard(
+                title: "Second Brain",
+                value: "\(user.totalSecondBrainSaves)",
+                icon: "brain.head.profile",
+                color: .purple
+            )
+            
+            SharedStatisticCard(
+                title: "Engagement",
+                value: String(format: "%.1f%%", user.videoEngagementRate * 100),
+                icon: "chart.line.uptrend.xyaxis",
+                color: .orange
+            )
+        }
+        .padding(.horizontal)
+        .transition(.opacity)
+    }
+    
+    private var signOutButton: some View {
+        Button(action: {
+            impactGenerator.impactOccurred(intensity: 0.6)
+            showSignOutAlert = true
+        }) {
+            Image(systemName: "rectangle.portrait.and.arrow.right")
+                .foregroundColor(.primary)
         }
     }
     

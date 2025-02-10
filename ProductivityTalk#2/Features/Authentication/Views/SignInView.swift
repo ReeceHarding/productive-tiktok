@@ -54,7 +54,7 @@ struct SignInView: View {
                             )
                             .onChange(of: viewModel.email) { _ in
                                 impactGenerator.impactOccurred(intensity: 0.3)
-                                Task {
+                                Task { @MainActor in
                                     await viewModel.updateValidation()
                                 }
                             }
@@ -68,7 +68,7 @@ struct SignInView: View {
                             )
                             .onChange(of: viewModel.password) { _ in
                                 impactGenerator.impactOccurred(intensity: 0.3)
-                                Task {
+                                Task { @MainActor in
                                     await viewModel.updateValidation()
                                 }
                             }
@@ -192,6 +192,12 @@ struct SignInView: View {
         }
         .sheet(isPresented: $showSignUp) {
             SignUpView()
+                .onDisappear {
+                    // Reset validation state when returning from sign up
+                    Task { @MainActor in
+                        await viewModel.updateValidation()
+                    }
+                }
         }
         .alert("Error", isPresented: $viewModel.showError) {
             Button("OK", role: .cancel) {

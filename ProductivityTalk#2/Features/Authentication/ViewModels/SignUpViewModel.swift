@@ -21,8 +21,15 @@ class SignUpViewModel: ObservableObject {
         let usernameIsValid = username.count >= 3 && username.count <= 30
         let passwordIsValid = isPasswordValid(password)
         let passwordsMatch = password == confirmPassword
+        return usernameIsValid && passwordIsValid && passwordsMatch
+    }
+    
+    @MainActor
+    func updateValidation() {
+        let usernameIsValid = username.count >= 3 && username.count <= 30
+        let passwordIsValid = isPasswordValid(password)
+        let passwordsMatch = password == confirmPassword
         
-        // Update validation message
         if username.isEmpty && password.isEmpty && confirmPassword.isEmpty {
             validationMessage = ""
         } else if !usernameIsValid && username.count > 0 {
@@ -34,8 +41,6 @@ class SignUpViewModel: ObservableObject {
         } else {
             validationMessage = ""
         }
-        
-        return usernameIsValid && passwordIsValid && passwordsMatch
     }
     
     private func isPasswordValid(_ password: String) -> Bool {

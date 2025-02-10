@@ -31,6 +31,28 @@ final class VideoUploadViewModel: ObservableObject {
         var progress: Double
         var isComplete: Bool
         var thumbnailImage: UIImage?
+        var processingStatus: VideoProcessingStatus = .uploading
+        
+        var statusMessage: String {
+            switch processingStatus {
+            case .uploading:
+                if progress == 0 {
+                    return "Preparing upload..."
+                } else if progress < 0.15 {
+                    return "Starting upload..."
+                } else if progress < 1 {
+                    return "Uploading video..."
+                } else {
+                    return "Upload complete, preparing for processing..."
+                }
+            case .processing:
+                return "Processing video (transcoding, generating thumbnail)..."
+            case .ready:
+                return "✅ Upload complete"
+            case .error:
+                return "❌ Upload failed"
+            }
+        }
     }
     
     func loadVideos() async {
@@ -40,8 +62,8 @@ final class VideoUploadViewModel: ObservableObject {
         for _ in selectedItems {
             let id = UUID().uuidString
             await MainActor.run {
+                LoggingService.debug("Creating initial upload state for video \(id)", component: "Upload")
                 self.uploadStates[id] = UploadState(progress: 0.0, isComplete: false, thumbnailImage: nil)
-                LoggingService.debug("Created initial upload state for video \(id)", component: "Upload")
             }
         }
         
@@ -58,7 +80,13 @@ final class VideoUploadViewModel: ObservableObject {
                     LoggingService.error("❌ Failed to load video data for item \(id)", component: "Upload")
                     throw NSError(domain: "VideoUpload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load video data"])
                 }
-                LoggingService.success("📦 Successfully loaded video data: \(ByteCountFormatter.string(fromByteCount: Int64(videoData.count), countStyle: .file))", component: "Upload")
+                
+                let fileSize = ByteCountFormatter.string(fromByteCount: Int64(videoData.count), countStyle: .file)
+                LoggingService.success("📦 Successfully loaded video data: \(fileSize)", component: "Upload")
+                
+                await MainActor.run {
+                    self.uploadStates[id]?.progress = 0.1 // Show initial progress
+                }
                 
                 // Create temporary file
                 tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(id).mov")
@@ -68,6 +96,9 @@ final class VideoUploadViewModel: ObservableObject {
                 
                 try videoData.write(to: tempURL)
                 LoggingService.debug("💾 Saved video to temporary file: \(tempURL.path)", component: "Upload")
+                await MainActor.run {
+                    self.uploadStates[id]?.progress = 0.15 // Show progress after saving temp file
+                }
                 
                 // Create initial Firestore document
                 guard let userId = AuthenticationManager.shared.currentUser?.uid,
@@ -123,6 +154,7 @@ final class VideoUploadViewModel: ObservableObject {
                 // Update UI state
                 await MainActor.run {
                     self.uploadStates[id] = UploadState(progress: 1.0, isComplete: true, thumbnailImage: nil)
+                    self.uploadStates[id]?.processingStatus = .ready
                     LoggingService.debug("📊 Updated UI state - Progress: 100%, Complete: true", component: "Upload")
                 }
                 
@@ -135,6 +167,7 @@ final class VideoUploadViewModel: ObservableObject {
                     self.uploadStates[id] = UploadState(progress: 0, isComplete: false, thumbnailImage: nil)
                     self.showError = true
                     self.errorMessage = "Failed to process video: \(error.localizedDescription)"
+                    self.uploadStates[id]?.processingStatus = .error
                     LoggingService.debug("📊 Updated UI state - Progress: 0%, Complete: false, Error shown", component: "Upload")
                 }
                 
@@ -202,7 +235,12 @@ final class VideoUploadViewModel: ObservableObject {
                         guard let progress = progress else { return }
                         let percentage = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
                         LoggingService.progress("Video upload", progress: percentage, component: id)
-                        self?.uploadStates[id]?.progress = percentage
+                        Task { @MainActor in
+                            self?.uploadStates[id]?.progress = percentage
+                            if percentage >= 1.0 {
+                                self?.uploadStates[id]?.processingStatus = .processing
+                            }
+                        }
                     }
                 )
                 
@@ -220,7 +258,10 @@ final class VideoUploadViewModel: ObservableObject {
                 LoggingService.success("Updated video URL in Firestore for \(id)", component: "Upload")
                 
                 // Mark as complete
-                self.uploadStates[id]?.isComplete = true
+                await MainActor.run {
+                    self.uploadStates[id]?.isComplete = true
+                    self.uploadStates[id]?.processingStatus = .ready
+                }
                 
             } catch {
                 LoggingService.error("Upload failed for \(id): \(error.localizedDescription)", component: "Upload")
