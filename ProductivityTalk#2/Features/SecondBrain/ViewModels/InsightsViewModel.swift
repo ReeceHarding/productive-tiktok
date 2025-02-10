@@ -98,15 +98,16 @@ class InsightsViewModel: ObservableObject {
                 LoggingService.debug("📄 Document data: \(data)", component: "Insights")
                 
                 // Try to get quotes from either field
-                var quotes: [String]? = (data["quotes"] as? [String])?.filter(isValidQuote)
+                var quotes: [String]? = data["quotes"] as? [String]
                 if let quotes = quotes, !quotes.isEmpty {
-                    LoggingService.debug("📝 Found valid quotes in 'quotes' field for document \(doc.documentID): \(quotes)", component: "Insights")
-                } else if let extractedQuotes = (data["extractedQuotes"] as? [String])?.filter(isValidQuote),
-                          !extractedQuotes.isEmpty {
-                    LoggingService.debug("📝 Found valid quotes in 'extractedQuotes' field for document \(doc.documentID): \(extractedQuotes)", component: "Insights")
+                    LoggingService.debug("📝 Found \(quotes.count) quotes for document \(doc.documentID)", component: "Insights")
+                    LoggingService.debug("   Content: \(quotes)", component: "Insights")
+                } else if let extractedQuotes = data["extractedQuotes"] as? [String], !extractedQuotes.isEmpty {
+                    LoggingService.debug("📝 Using \(extractedQuotes.count) legacy quotes for document \(doc.documentID)", component: "Insights")
+                    LoggingService.debug("   Content: \(extractedQuotes)", component: "Insights")
                     quotes = extractedQuotes
                 } else {
-                    LoggingService.warning("⚠️ No valid quotes found in document \(doc.documentID)", component: "Insights")
+                    LoggingService.debug("ℹ️ No quotes found in document \(doc.documentID)", component: "Insights")
                 }
                 
                 if let validQuotes = quotes, !validQuotes.isEmpty, let videoId = data["videoId"] as? String {
@@ -299,12 +300,14 @@ class InsightsViewModel: ObservableObject {
                 // Try to get quotes from either field
                 var quotes: [String]? = data["quotes"] as? [String]
                 if let quotes = quotes, !quotes.isEmpty {
-                    LoggingService.debug("📝 Found quotes in 'quotes' field for document \(doc.documentID): \(quotes)", component: "Insights")
+                    LoggingService.debug("📝 Found \(quotes.count) quotes for document \(doc.documentID)", component: "Insights")
+                    LoggingService.debug("   Content: \(quotes)", component: "Insights")
                 } else if let extractedQuotes = data["extractedQuotes"] as? [String], !extractedQuotes.isEmpty {
-                    LoggingService.debug("📝 Found quotes in 'extractedQuotes' field for document \(doc.documentID): \(extractedQuotes)", component: "Insights")
+                    LoggingService.debug("📝 Using \(extractedQuotes.count) legacy quotes for document \(doc.documentID)", component: "Insights")
+                    LoggingService.debug("   Content: \(extractedQuotes)", component: "Insights")
                     quotes = extractedQuotes
                 } else {
-                    LoggingService.warning("⚠️ No quotes found in document \(doc.documentID)", component: "Insights")
+                    LoggingService.debug("ℹ️ No quotes found in document \(doc.documentID)", component: "Insights")
                 }
                 
                 guard let validQuotes = quotes, !validQuotes.isEmpty,

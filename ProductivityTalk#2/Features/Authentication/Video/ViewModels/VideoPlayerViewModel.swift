@@ -168,7 +168,7 @@ public class VideoPlayerViewModel: ObservableObject {
             guard let self = self else { return }
             let videoId = self.video.id
             await self.deinitHandler?()
-            self.cleanup() // Call cleanup on MainActor
+            await self.cleanup() // Call cleanup on MainActor
             LoggingService.debug("VideoPlayerViewModel deinit for video \(videoId)", component: "Player")
         }
     }
@@ -182,7 +182,7 @@ public class VideoPlayerViewModel: ObservableObject {
         // Check if we have a preloaded player first
         if let preloadedPlayer = preloadedPlayers[video.id] {
             LoggingService.video("✅ Using preloaded player for \(video.id)", component: "Player")
-            setupPlayer(preloadedPlayer)
+            await setupPlayer(preloadedPlayer)
             preloadedPlayers.removeValue(forKey: video.id)
             return
         }
@@ -247,20 +247,18 @@ public class VideoPlayerViewModel: ObservableObject {
             
             let player = AVPlayer(playerItem: playerItem)
             
-            await MainActor.run {
-                setupPlayer(player)
-            }
+            await setupPlayer(player)
         } catch {
             LoggingService.error("Failed to setup player: \(error.localizedDescription)", component: "Player")
             throw error
         }
     }
     
-    private func setupPlayer(_ player: AVPlayer) {
+    private func setupPlayer(_ player: AVPlayer) async {
         LoggingService.video("Setting up player for \(video.id)", component: "Player")
         
         // Clean up existing player first
-        cleanup()
+        await cleanup()
         
         self.player = player
         observePlayerStatus(player)
@@ -374,9 +372,7 @@ public class VideoPlayerViewModel: ObservableObject {
             // Get reference to the video document
             let videoRef = firestore.collection("videos").document(video.id)
             
-            let _ = try await firestore.runTransaction { [weak self] (transaction, errorPointer) -> Any? in
-                guard let self = self else { return nil }
-                
+            let transactionResult = try await firestore.runTransaction { (transaction, errorPointer) -> Any? in
                 let secondBrainDoc: DocumentSnapshot
                 
                 do {
@@ -399,12 +395,8 @@ public class VideoPlayerViewModel: ObservableObject {
                         "updatedAt": FieldValue.serverTimestamp()
                     ], forDocument: videoRef)
                     
-                    Task { @MainActor in
-                        self.isInSecondBrain = false
-                        self.brainCount -= 1
-                        self.showBrainAnimation = false
-                    }
                     LoggingService.success("Removed video \(self.video.id) from second brain", component: "Player")
+                    return true as Any
                 } else {
                     // Add to second brain
                     transaction.setData([
@@ -417,15 +409,26 @@ public class VideoPlayerViewModel: ObservableObject {
                         "updatedAt": FieldValue.serverTimestamp()
                     ], forDocument: videoRef)
                     
-                    Task { @MainActor in
+                    LoggingService.success("Added video \(self.video.id) to second brain", component: "Player")
+                    return false as Any
+                }
+            }
+            
+            // Update UI state after transaction completes
+            await MainActor.run {
+                if let wasRemoved = transactionResult as? Bool {
+                    if wasRemoved {
+                        self.isInSecondBrain = false
+                        self.brainCount -= 1
+                        self.showBrainAnimation = false
+                        LoggingService.debug("UI updated after removing from second brain", component: "Player")
+                    } else {
                         self.isInSecondBrain = true
                         self.brainCount += 1
                         self.showBrainAnimation = true
+                        LoggingService.debug("UI updated after adding to second brain", component: "Player")
                     }
-                    LoggingService.success("Added video \(self.video.id) to second brain", component: "Player")
                 }
-                
-                return nil
             }
         } catch {
             await MainActor.run {
@@ -692,6 +695,7 @@ public class VideoPlayerViewModel: ObservableObject {
         try await firestore.collection("videos").document(videoId).updateData(sendableData)
     }
     
+    @MainActor
     private func handlePlaybackError(_ error: Error) {
         LoggingService.error("Playback error for video \(video.id): \(error.localizedDescription)", component: "Player")
         self.error = error.localizedDescription

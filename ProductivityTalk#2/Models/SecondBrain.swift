@@ -54,12 +54,14 @@ public struct SecondBrain: Identifiable, Codable {
         // Try to get quotes from either field
         var fetchedQuotes: [String]? = data["quotes"] as? [String]
         if let quotes = fetchedQuotes, !quotes.isEmpty {
-            LoggingService.debug("📝 SecondBrain: Found quotes in 'quotes' field for document \(document.documentID): \(quotes)", component: "SecondBrain")
+            LoggingService.debug("�� SecondBrain: Found \(quotes.count) quotes for document \(document.documentID)", component: "SecondBrain")
+            LoggingService.debug("   Content: \(quotes)", component: "SecondBrain")
         } else if let extractedQuotes = data["extractedQuotes"] as? [String], !extractedQuotes.isEmpty {
-            LoggingService.debug("📝 SecondBrain: Found quotes in 'extractedQuotes' field for document \(document.documentID): \(extractedQuotes)", component: "SecondBrain")
+            LoggingService.debug("📝 SecondBrain: Using \(extractedQuotes.count) legacy quotes for document \(document.documentID)", component: "SecondBrain")
+            LoggingService.debug("   Content: \(extractedQuotes)", component: "SecondBrain")
             fetchedQuotes = extractedQuotes
         } else {
-            LoggingService.warning("⚠️ SecondBrain: No quotes found in document \(document.documentID)", component: "SecondBrain")
+            LoggingService.debug("ℹ️ SecondBrain: No quotes found in document \(document.documentID)", component: "SecondBrain")
             fetchedQuotes = []
         }
         

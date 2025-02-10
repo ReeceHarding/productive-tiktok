@@ -11,7 +11,10 @@ actor VideoProcessingService {
     private init() {}
     
     // MARK: - Video Processing Pipeline
-    func processAndUploadVideo(sourceURL: URL) async throws -> (videoURL: String, thumbnailURL: String) {
+    func processAndUploadVideo(
+        sourceURL: URL,
+        onProgress: ((Double) -> Void)? = nil
+    ) async throws -> (videoURL: String, thumbnailURL: String) {
         LoggingService.video("🎬 Starting video processing pipeline", component: "Processing")
         LoggingService.debug("Source URL: \(sourceURL.path)", component: "Processing")
         
@@ -72,7 +75,8 @@ actor VideoProcessingService {
             let videoDownloadURL = try await uploadToFirebase(
                 fileURL: sourceURL,
                 path: "videos",
-                filename: "\(videoId).mp4"  // Always use .mp4 extension for consistency
+                filename: "\(videoId).mp4",  // Always use .mp4 extension for consistency
+                onProgress: onProgress
             )
             LoggingService.success("✅ Upload completed successfully", component: "Upload")
             LoggingService.debug("📍 Video URL: \(videoDownloadURL)", component: "Upload")
@@ -158,7 +162,12 @@ actor VideoProcessingService {
     }
     
     // MARK: - Firebase Upload
-    private func uploadToFirebase(fileURL: URL, path: String, filename: String? = nil) async throws -> String {
+    private func uploadToFirebase(
+        fileURL: URL,
+        path: String,
+        filename: String? = nil,
+        onProgress: ((Double) -> Void)? = nil
+    ) async throws -> String {
         let actualFilename = filename ?? "\(UUID().uuidString).mp4"  // Always use .mp4 extension
         let storageRef = storage.reference().child("\(path)/\(actualFilename)")
         
@@ -182,7 +191,7 @@ actor VideoProcessingService {
         let uploadTask = storageRef.putFile(from: fileURL, metadata: metadata)
         
         // Setup progress monitoring
-        setupUploadProgressMonitoring(uploadTask: uploadTask, filename: actualFilename)
+        setupUploadProgressMonitoring(uploadTask: uploadTask, filename: actualFilename, onProgress: onProgress)
         
         // Return continuation
         return try await withCheckedThrowingContinuation { continuation in
@@ -203,10 +212,13 @@ actor VideoProcessingService {
         }
     }
     
-    private func setupUploadProgressMonitoring(uploadTask: StorageUploadTask, filename: String) {
+    private func setupUploadProgressMonitoring(
+        uploadTask: StorageUploadTask,
+        filename: String,
+        onProgress: ((Double) -> Void)? = nil
+    ) {
         var lastReportedProgress: Int = -1
         
-        // Break down the progress monitoring into smaller parts
         uploadTask.observe(.progress) { snapshot in
             guard let progress = snapshot.progress else { return }
             
@@ -217,15 +229,25 @@ actor VideoProcessingService {
             
             // Only report if progress has changed
             if percentComplete != lastReportedProgress {
-                // Log progress
                 LoggingService.progress("Video upload", progress: Double(percentComplete) / 100.0, component: filename)
                 
                 // Format byte counts
-                let completedStr = ByteCountFormatter.string(fromByteCount: progress.completedUnitCount, countStyle: .file)
-                let totalStr = ByteCountFormatter.string(fromByteCount: progress.totalUnitCount, countStyle: .file)
+                let completedStr = ByteCountFormatter.string(
+                    fromByteCount: progress.completedUnitCount,
+                    countStyle: .file
+                )
+                let totalStr = ByteCountFormatter.string(
+                    fromByteCount: progress.totalUnitCount,
+                    countStyle: .file
+                )
                 
-                // Log detailed progress
-                LoggingService.debug("📊 Upload progress: \(percentComplete)% (\(completedStr) / \(totalStr))", component: "Storage")
+                LoggingService.debug(
+                    "📊 Upload progress: \(percentComplete)% (\(completedStr) / \(totalStr))",
+                    component: "Storage"
+                )
+                
+                // Call progress callback
+                onProgress?(Double(percentComplete) / 100.0)
                 
                 lastReportedProgress = percentComplete
             }

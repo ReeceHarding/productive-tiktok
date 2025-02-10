@@ -3,6 +3,9 @@ import FirebaseFirestore
 
 public enum VideoProcessingStatus: String, Codable {
     case uploading = "uploading"
+    case transcribing = "transcribing"
+    case extractingQuotes = "extracting_quotes"
+    case generatingMetadata = "generating_metadata"
     case processing = "processing"
     case ready = "ready"
     case error = "error"
@@ -103,21 +106,16 @@ public struct Video: Identifiable, Codable {
         
         // Log quote loading
         if let quotes = data["quotes"] as? [String] {
-            LoggingService.debug("📝 Video: Found \(quotes.count) quotes in 'quotes' field", component: "Video")
-            LoggingService.debug("   Quotes: \(quotes)", component: "Video")
+            LoggingService.debug("📝 Video: Found \(quotes.count) quotes", component: "Video")
+            LoggingService.debug("   Content: \(quotes)", component: "Video")
             self.quotes = quotes
+        } else if let extractedQuotes = data["extractedQuotes"] as? [String] {
+            LoggingService.debug("📝 Video: Using \(extractedQuotes.count) legacy quotes", component: "Video")
+            LoggingService.debug("   Content: \(extractedQuotes)", component: "Video")
+            self.quotes = extractedQuotes
         } else {
-            LoggingService.debug("⚠️ Video: No quotes found in 'quotes' field", component: "Video")
+            LoggingService.debug("ℹ️ Video: No quotes available yet", component: "Video")
             self.quotes = nil
-        }
-        
-        if let extractedQuotes = data["extractedQuotes"] as? [String] {
-            LoggingService.debug("📝 Video: Found \(extractedQuotes.count) quotes in 'extractedQuotes' field", component: "Video")
-            LoggingService.debug("   Extracted Quotes: \(extractedQuotes)", component: "Video")
-            self.extractedQuotes = extractedQuotes
-        } else {
-            LoggingService.debug("⚠️ Video: No quotes found in 'extractedQuotes' field", component: "Video")
-            self.extractedQuotes = nil
         }
         
         self.autoTitle = data["autoTitle"] as? String

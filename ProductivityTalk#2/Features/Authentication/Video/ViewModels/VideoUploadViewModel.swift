@@ -23,6 +23,9 @@ final class VideoUploadViewModel: ObservableObject {
     private let firestore = Firestore.firestore()
     private let videoProcessor = VideoProcessingService.shared
     
+    // Add to class properties
+    private var documentListeners: [String: ListenerRegistration] = [:]
+    
     init() {
         // Initialize with default values
     }
@@ -32,6 +35,8 @@ final class VideoUploadViewModel: ObservableObject {
         var isComplete: Bool
         var thumbnailImage: UIImage?
         var processingStatus: VideoProcessingStatus = .uploading
+        var transcript: String?
+        var quotes: [String]?
         
         var statusMessage: String {
             switch processingStatus {
@@ -41,12 +46,18 @@ final class VideoUploadViewModel: ObservableObject {
                 } else if progress < 0.15 {
                     return "Starting upload..."
                 } else if progress < 1 {
-                    return "Uploading video..."
+                    return "Uploading video... \(Int(progress * 100))%"
                 } else {
                     return "Upload complete, preparing for processing..."
                 }
+            case .transcribing:
+                return "Transcribing video content..."
+            case .extractingQuotes:
+                return "Extracting meaningful quotes..."
+            case .generatingMetadata:
+                return "Generating video metadata..."
             case .processing:
-                return "Processing video (transcoding, generating thumbnail)..."
+                return "Processing video..."
             case .ready:
                 return "✅ Upload complete"
             case .error:
@@ -144,9 +155,21 @@ final class VideoUploadViewModel: ObservableObject {
                 try await batch.commit()
                 LoggingService.success("✅ Created initial video documents in Firestore", component: "Upload")
                 
-                // Process and upload video
+                // Process and upload video with progress callback
                 LoggingService.video("🔄 Starting video processing pipeline", component: "Upload")
-                let (videoURL, thumbnailURL) = try await videoProcessor.processAndUploadVideo(sourceURL: tempURL)
+                let (videoURL, thumbnailURL) = try await videoProcessor.processAndUploadVideo(
+                    sourceURL: tempURL,
+                    onProgress: { [weak self] progress in
+                        Task { @MainActor [weak self] in
+                            guard let self = self else { return }
+                            self.uploadStates[id]?.progress = progress
+                            if progress >= 1.0 {
+                                self.uploadStates[id]?.processingStatus = .processing
+                            }
+                            LoggingService.debug("📊 Upload progress for \(id): \(Int(progress * 100))%", component: "Upload")
+                        }
+                    }
+                )
                 LoggingService.success("✅ Video processed successfully", component: "Upload")
                 LoggingService.debug("📍 Video URL: \(videoURL)", component: "Upload")
                 LoggingService.debug("📍 Thumbnail URL: \(thumbnailURL)", component: "Upload")
@@ -157,6 +180,9 @@ final class VideoUploadViewModel: ObservableObject {
                     self.uploadStates[id]?.processingStatus = .ready
                     LoggingService.debug("📊 Updated UI state - Progress: 100%, Complete: true", component: "Upload")
                 }
+                
+                // Add listener after creating the document
+                listenToVideoDocument(id: id)
                 
             } catch {
                 LoggingService.error("❌ Failed to process video: \(error.localizedDescription)", component: "Upload")
@@ -300,5 +326,50 @@ final class VideoUploadViewModel: ObservableObject {
     private func showError(_ message: String) {
         errorMessage = message
         showError = true
+    }
+    
+    private func listenToVideoDocument(id: String) {
+        LoggingService.debug("Setting up listener for video \(id)", component: "Upload")
+        let docRef = firestore.collection("videos").document(id)
+        
+        documentListeners[id] = docRef.addSnapshotListener { [weak self] snapshot, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                LoggingService.error("Error listening to video \(id): \(error.localizedDescription)", component: "Upload")
+                return
+            }
+            
+            guard let snapshot = snapshot, snapshot.exists,
+                  let video = Video(document: snapshot) else {
+                LoggingService.error("No valid snapshot for video \(id)", component: "Upload")
+                return
+            }
+            
+            Task { @MainActor in
+                // Update processing status
+                self.uploadStates[id]?.processingStatus = video.processingStatus
+                
+                // Update transcript and quotes when available
+                if let transcript = video.transcript {
+                    self.uploadStates[id]?.transcript = transcript
+                }
+                
+                if let quotes = video.quotes {
+                    self.uploadStates[id]?.quotes = quotes
+                }
+                
+                // If processing is complete or failed, remove the listener
+                if video.processingStatus == .ready || video.processingStatus == .error {
+                    self.documentListeners[id]?.remove()
+                    self.documentListeners.removeValue(forKey: id)
+                    LoggingService.debug("Removed listener for video \(id)", component: "Upload")
+                }
+            }
+        }
+    }
+    
+    deinit {
+        documentListeners.values.forEach { $0.remove() }
     }
 } 

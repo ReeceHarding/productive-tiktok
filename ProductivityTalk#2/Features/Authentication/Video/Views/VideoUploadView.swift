@@ -277,6 +277,7 @@ extension VideoUploadView {
 
         var body: some View {
             VStack(spacing: 12) {
+                // Main row content
                 HStack(spacing: 16) {
                     if let thumbnail = state.thumbnailImage {
                         Image(uiImage: thumbnail)
@@ -295,7 +296,7 @@ extension VideoUploadView {
                         }
                     }
 
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 4) {
                         // Title and ID
                         Text("Video \(fileId.prefix(8))")
                             .font(.subheadline)
@@ -303,7 +304,6 @@ extension VideoUploadView {
 
                         // Status Message with Icon
                         HStack(spacing: 4) {
-                            // Dynamic icon based on status
                             Image(systemName: statusIcon)
                                 .foregroundColor(statusColor)
                             Text(state.statusMessage)
@@ -313,36 +313,61 @@ extension VideoUploadView {
 
                         // Progress Section
                         if !state.isComplete && state.processingStatus != .error {
-                            VStack(alignment: .leading, spacing: 4) {
-                                // Progress Bar
-                                GeometryReader { geometry in
-                                    ZStack(alignment: .leading) {
-                                        Rectangle()
-                                            .fill(Color.gray.opacity(0.3))
-                                            .frame(width: geometry.size.width, height: 6)
-                                            .cornerRadius(3)
-                                        
-                                        Rectangle()
-                                            .fill(progressColor)
-                                            .frame(width: geometry.size.width * CGFloat(state.progress), height: 6)
-                                            .cornerRadius(3)
-                                    }
-                                }
-                                .frame(height: 6)
-                                
-                                // Percentage and Size
-                                HStack {
-                                    if state.progress > 0 && state.progress < 1 {
-                                        Text("\(Int(state.progress * 100))%")
-                                            .font(.caption)
-                                            .foregroundColor(progressColor)
-                                            .bold()
-                                    }
+                            GeometryReader { geometry in
+                                ZStack(alignment: .leading) {
+                                    Rectangle()
+                                        .fill(Color.gray.opacity(0.3))
+                                        .frame(width: geometry.size.width, height: 6)
+                                        .cornerRadius(3)
+                                    
+                                    Rectangle()
+                                        .fill(progressColor)
+                                        .frame(width: geometry.size.width * CGFloat(state.progress), height: 6)
+                                        .cornerRadius(3)
                                 }
                             }
+                            .frame(height: 6)
                         }
                     }
                     Spacer()
+                }
+                
+                // Show transcript when available
+                if let transcript = state.transcript,
+                   state.processingStatus == .extractingQuotes || state.processingStatus == .generatingMetadata || state.processingStatus == .ready {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Transcript")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text(transcript)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(3)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                
+                // Show quotes when available
+                if let quotes = state.quotes,
+                   !quotes.isEmpty,
+                   state.processingStatus == .generatingMetadata || state.processingStatus == .ready {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Extracted Quotes")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        ForEach(quotes, id: \.self) { quote in
+                            Text("• \(quote)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(8)
                 }
                 
                 // Error Message if any
@@ -366,6 +391,12 @@ extension VideoUploadView {
             switch state.processingStatus {
             case .uploading:
                 return "arrow.up.circle"
+            case .transcribing:
+                return "text.bubble"
+            case .extractingQuotes:
+                return "quote.bubble"
+            case .generatingMetadata:
+                return "gear.circle"
             case .processing:
                 return "gear.circle"
             case .ready:
@@ -379,6 +410,8 @@ extension VideoUploadView {
             switch state.processingStatus {
             case .uploading:
                 return .blue
+            case .transcribing, .extractingQuotes, .generatingMetadata:
+                return .orange
             case .processing:
                 return .orange
             case .ready:
@@ -389,16 +422,7 @@ extension VideoUploadView {
         }
         
         private var progressColor: Color {
-            switch state.processingStatus {
-            case .uploading:
-                return .blue
-            case .processing:
-                return .orange
-            case .ready:
-                return .green
-            case .error:
-                return .red
-            }
+            statusColor
         }
     }
 
