@@ -81,9 +81,9 @@ public class VideoFeedViewModel: ObservableObject {
             
             // Preload the first two videos to improve initial scroll performance
             if !fetchedVideos.isEmpty {
-                preloadVideo(at: 0)
+                await preloadVideo(at: 0)
                 if fetchedVideos.count > 1 {
-                    preloadVideo(at: 1)
+                    await preloadVideo(at: 1)
                 }
             }
             
@@ -184,7 +184,7 @@ public class VideoFeedViewModel: ObservableObject {
         LoggingService.debug("Subscribed to updates for video \(video.id)", component: "Feed")
     }
     
-    func preloadVideo(at index: Int) {
+    func preloadVideo(at index: Int) async {
         guard index >= 0 && index < videos.count else {
             LoggingService.error("Invalid index \(index) for preloading", component: "Feed")
             return
@@ -213,14 +213,14 @@ public class VideoFeedViewModel: ObservableObject {
         preloadTasks[video.id] = preloadTask
     }
     
-    func preloadAdjacentVideos(currentIndex: Int) {
+    func preloadAdjacentVideos(currentIndex: Int) async {
         LoggingService.debug("Preloading adjacent videos for index \(currentIndex)", component: "Feed")
         
         // Preload next videos
         for offset in 1...preloadWindow {
             let nextIndex = currentIndex + offset
             if nextIndex < videos.count {
-                preloadVideo(at: nextIndex)
+                await preloadVideo(at: nextIndex)
             }
         }
         
@@ -228,7 +228,7 @@ public class VideoFeedViewModel: ObservableObject {
         for offset in 1...preloadWindow {
             let prevIndex = currentIndex - offset
             if prevIndex >= 0 {
-                preloadVideo(at: prevIndex)
+                await preloadVideo(at: prevIndex)
             }
         }
     }

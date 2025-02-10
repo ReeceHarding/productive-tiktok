@@ -7,6 +7,8 @@ struct VideoFeedView: View {
     @State private var scrollPosition: String?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
+    @State private var showingSchedulingView = false
+    @State private var selectedVideo: Video?
     
     var body: some View {
         ScrollView {
@@ -15,6 +17,29 @@ struct VideoFeedView: View {
                     VideoPlayerView(video: video)
                         .id(video.id)
                         .containerRelativeFrame([.horizontal, .vertical])
+                        .frame(height: UIScreen.main.bounds.height)
+                        .overlay(alignment: .topTrailing) {
+                            HStack(spacing: 16) {
+                                // Calendar button
+                                Button(action: {
+                                    selectedVideo = video
+                                    showingSchedulingView = true
+                                }) {
+                                    Image(systemName: "calendar.badge.plus")
+                                        .font(.title2)
+                                        .foregroundColor(.white)
+                                        .shadow(radius: 2)
+                                }
+                                .padding(.trailing, 8)
+                                
+                                // Second Brain button (if it exists)
+                                if let secondBrainButton = video.secondBrainButton {
+                                    secondBrainButton
+                                }
+                            }
+                            .padding(.top, 60)
+                            .padding(.trailing)
+                        }
                 }
             }
             .scrollTargetLayout()
@@ -62,6 +87,15 @@ struct VideoFeedView: View {
                 }
             @unknown default:
                 break
+            }
+        }
+        .sheet(isPresented: $showingSchedulingView) {
+            if let video = selectedVideo,
+               let transcript = video.transcript {
+                SchedulingView(
+                    transcript: transcript,
+                    videoTitle: video.title
+                )
             }
         }
     }

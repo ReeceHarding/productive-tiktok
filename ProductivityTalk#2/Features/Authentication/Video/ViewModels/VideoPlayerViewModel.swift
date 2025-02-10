@@ -172,7 +172,12 @@ public class VideoPlayerViewModel: ObservableObject {
             "AVURLAssetPreferPreciseDurationAndTimingKey": false
         ])
         
-        try await setupNewPlayer(with: asset)
+        do {
+            try await setupNewPlayer(with: asset)
+        } catch {
+            LoggingService.error("Failed to setup player: \(error.localizedDescription)", component: "Player")
+            isLoading = false
+        }
     }
     
     private func setupNewPlayer(with asset: AVAsset) async {
@@ -293,7 +298,7 @@ public class VideoPlayerViewModel: ObservableObject {
         
         // Re-apply fade in if not muted
         Task { @MainActor in
-            await fadeInAudio()
+            try? await fadeInAudio()
         }
     }
     
@@ -457,7 +462,7 @@ public class VideoPlayerViewModel: ObservableObject {
         showControls.toggle()
     }
     
-    public func preloadVideo(_ video: Video) {
+    public func preloadVideo(_ video: Video) async {
         LoggingService.video("Preloading video \(video.id)", component: "Player")
         
         // Don't preload if we already have this video preloaded
@@ -505,11 +510,13 @@ public class VideoPlayerViewModel: ObservableObject {
                 }
                 
                 // Now that player is ready, attempt preroll
-                await player.preroll(atRate: 1.0)
-                
-                // Store in preloaded players
-                preloadedPlayers[video.id] = player
-                LoggingService.video("✅ Successfully preloaded video \(video.id)", component: "Player")
+                if await player.preroll(atRate: 1.0) {
+                    // Store in preloaded players
+                    preloadedPlayers[video.id] = player
+                    LoggingService.video("✅ Successfully preloaded video \(video.id)", component: "Player")
+                } else {
+                    LoggingService.error("Failed to preroll video \(video.id)", component: "Player")
+                }
             } catch {
                 LoggingService.error("Failed to preload video \(video.id): \(error.localizedDescription)", component: "Player")
             }
