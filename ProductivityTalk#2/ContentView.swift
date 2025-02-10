@@ -20,18 +20,27 @@ struct ContentView: View {
             } else if authManager.isAuthenticated {
                 MainTabView()
             } else {
-                SignInView()
+                SignUpView()
             }
         }
         .onAppear {
-            // Check authentication state when view appears
+            LoggingService.debug("ContentView appeared, checking auth state", component: "Navigation")
             checkAuthState()
         }
     }
     
     private func checkAuthState() {
+        LoggingService.debug("Starting auth state check", component: "Navigation")
+        // Check if there's a current user immediately
+        if Auth.auth().currentUser == nil {
+            LoggingService.debug("No current user found, showing sign in", component: "Navigation")
+            isLoading = false
+            return
+        }
+        
         // Add a small delay to allow Firebase to initialize
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            LoggingService.debug("Auth state check completed, isAuthenticated: \(self.authManager.isAuthenticated)", component: "Navigation")
             isLoading = false
         }
     }
@@ -69,74 +78,81 @@ private struct LoadingView: View {
 
 // MARK: - Main Tab View
 struct MainTabView: View {
+    @ObservedObject private var authManager = AuthenticationManager.shared
     @State private var showSignOutAlert = false
     @State private var isSigningOut = false
     @State private var signOutError: String?
     
     var body: some View {
-        TabView {
-            VideoFeedView()
-                .tabItem {
-                    VStack {
-                        Image(systemName: "play.circle.fill")
-                        Text("For You")
+        Group {
+            if !authManager.isAuthenticated {
+                SignInView()
+            } else {
+                TabView {
+                    VideoFeedView()
+                        .tabItem {
+                            VStack {
+                                Image(systemName: "play.circle.fill")
+                                Text("For You")
+                            }
+                        }
+                    
+                    NavigationView {
+                        InsightsView()
+                    }
+                    .tabItem {
+                        VStack {
+                            Image(systemName: "brain.head.profile")
+                            Text("Second Brain")
+                        }
+                    }
+                    
+                    VideoUploadView()
+                        .tabItem {
+                            VStack {
+                                Image(systemName: "video.badge.plus")
+                                Text("Upload")
+                            }
+                        }
+                    
+                    Text("Calendar")
+                        .tabItem {
+                            VStack {
+                                Image(systemName: "calendar")
+                                Text("Calendar")
+                            }
+                        }
+                    
+                    NavigationView {
+                        ProfileView()
+                    }
+                    .tabItem {
+                        VStack {
+                            Image(systemName: "person.circle")
+                            Text("Profile")
+                        }
                     }
                 }
-            
-            NavigationView {
-                InsightsView()
-            }
-            .tabItem {
-                VStack {
-                    Image(systemName: "brain.head.profile")
-                    Text("Second Brain")
+                .tint(.blue)
+                .onAppear {
+                    // Customize TabView appearance
+                    let appearance = UITabBarAppearance()
+                    appearance.configureWithOpaqueBackground()
+                    appearance.backgroundColor = .systemBackground
+                    
+                    // Use this appearance for both normal and scrolling
+                    UITabBar.appearance().standardAppearance = appearance
+                    UITabBar.appearance().scrollEdgeAppearance = appearance
                 }
-            }
-            
-            VideoUploadView()
-                .tabItem {
-                    VStack {
-                        Image(systemName: "video.badge.plus")
-                        Text("Upload")
+                .overlay {
+                    if isSigningOut {
+                        Color.black.opacity(0.3)
+                            .edgesIgnoringSafeArea(.all)
+                            .overlay {
+                                SharedLoadingView("Signing out...")
+                            }
                     }
                 }
-            
-            Text("Calendar")
-                .tabItem {
-                    VStack {
-                        Image(systemName: "calendar")
-                        Text("Calendar")
-                    }
-                }
-            
-            NavigationView {
-                ProfileView()
-            }
-            .tabItem {
-                VStack {
-                    Image(systemName: "person.circle")
-                    Text("Profile")
-                }
-            }
-        }
-        .tint(.blue)
-        .onAppear {
-            // Customize TabView appearance
-            let appearance = UITabBarAppearance()
-            appearance.configureWithOpaqueBackground()
-            appearance.backgroundColor = .systemBackground
-            
-            // Use this appearance for both normal and scrolling
-            UITabBar.appearance().standardAppearance = appearance
-            UITabBar.appearance().scrollEdgeAppearance = appearance
-        }
-        .overlay {
-            if isSigningOut {
-                Color.black.opacity(0.3)
-                    .edgesIgnoringSafeArea(.all)
-                    .overlay {
-                        SharedLoadingView("Signing out...")
-                    }
             }
         }
         .alert("Sign Out", isPresented: $showSignOutAlert) {
@@ -164,13 +180,13 @@ struct MainTabView: View {
     
     private func signOut() {
         isSigningOut = true
-        print("🚪 MainTabView: Starting sign out process")
+        LoggingService.debug("MainTabView: Starting sign out process", component: "Navigation")
         Task {
             do {
                 try await AuthenticationManager.shared.signOut()
-                print("✅ MainTabView: Successfully signed out")
+                LoggingService.success("MainTabView: Successfully signed out", component: "Navigation")
             } catch {
-                print("❌ MainTabView: Sign out error: \(error.localizedDescription)")
+                LoggingService.error("MainTabView: Sign out error: \(error.localizedDescription)", component: "Navigation")
                 signOutError = error.localizedDescription
             }
             isSigningOut = false

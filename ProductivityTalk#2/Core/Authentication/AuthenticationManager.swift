@@ -41,85 +41,119 @@ class AuthenticationManager: ObservableObject {
     @Published private(set) var authError: AuthError?
     
     private let auth = Auth.auth()
-    private let firestore = Firestore.firestore()
+    private var firestore: Firestore!
     private var authStateHandle: AuthStateDidChangeListenerHandle?
-    private var activeListeners: [ListenerRegistration] = []  // Track active listeners
+    private var activeListeners: [ListenerRegistration] = []
     
     deinit {
-        print("🔐 Auth: Cleaning up AuthenticationManager")
+        LoggingService.authentication("Cleaning up AuthenticationManager", component: "Auth")
         authStateHandle = nil
         activeListeners.forEach { $0.remove() }
         activeListeners.removeAll()
     }
     
     private init() {
-        print("🔐 Auth: Initializing AuthenticationManager")
+        LoggingService.authentication("Initializing AuthenticationManager", component: "Auth")
+        initializeFirestore()
         setupAuthStateHandler()
     }
     
+    private func initializeFirestore() {
+        LoggingService.authentication("Initializing Firestore", component: "Auth")
+        firestore = Firestore.firestore()
+    }
+    
     private func setupAuthStateHandler() {
-        print("🔐 Auth: Setting up authentication state handler")
+        LoggingService.authentication("Setting up authentication state handler", component: "Auth")
         authStateHandle = auth.addStateDidChangeListener { [weak self] _, user in
             guard let self = self else { return }
-            self.currentUser = user
-            self.isAuthenticated = user != nil
             
-            if let user = user {
-                print("✅ Auth: User authenticated - ID: \(user.uid)")
-                UserDefaults.standard.set(user.uid, forKey: "userId")
-                Task {
+            Task { @MainActor in
+                self.currentUser = user
+                self.isAuthenticated = user != nil
+                
+                if let user = user {
+                    LoggingService.success("User authenticated - ID: \(user.uid)", component: "Auth")
+                    UserDefaults.standard.set(user.uid, forKey: "userId")
                     await self.fetchAppUser(uid: user.uid)
+                } else {
+                    LoggingService.info("No authenticated user", component: "Auth")
+                    UserDefaults.standard.removeObject(forKey: "userId")
+                    self.appUser = nil
                 }
-            } else {
-                print("ℹ️ Auth: No authenticated user")
-                UserDefaults.standard.removeObject(forKey: "userId")
-                self.appUser = nil
             }
         }
     }
     
     private func fetchAppUser(uid: String) async {
-        print("🔍 Auth: Fetching app user data for UID: \(uid)")
+        LoggingService.debug("Fetching app user data for UID: \(uid)", component: "Auth")
         do {
             // Remove any existing listener for user document
             activeListeners.forEach { $0.remove() }
             activeListeners.removeAll()
             
             let document = try await firestore.collection("users").document(uid).getDocument()
+            
+            if !document.exists {
+                LoggingService.debug("User document does not exist, creating default document", component: "Auth")
+                // Get email from Auth user
+                let email = Auth.auth().currentUser?.email ?? ""
+                try await createUserDocument(uid: uid, email: email, username: "User\(String(uid.prefix(4)))")
+                // Fetch the newly created document
+                let newDocument = try await firestore.collection("users").document(uid).getDocument()
+                if let appUser = AppUser(document: newDocument) {
+                    await MainActor.run {
+                        self.appUser = appUser
+                    }
+                    LoggingService.success("Successfully created and fetched new user document", component: "Auth")
+                } else {
+                    LoggingService.error("Failed to parse newly created user document", component: "Auth")
+                    await MainActor.run {
+                        self.authError = .unknown(NSError(domain: "Auth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to parse user data"]))
+                    }
+                }
+                return
+            }
+            
             if let appUser = AppUser(document: document) {
-                self.appUser = appUser
-                print("✅ Auth: Successfully fetched app user data")
+                await MainActor.run {
+                    self.appUser = appUser
+                }
+                LoggingService.success("Successfully fetched app user data", component: "Auth")
             } else {
-                print("❌ Auth: Failed to parse app user data")
-                self.authError = .unknown(NSError(domain: "Auth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to parse user data"]))
+                LoggingService.error("Failed to parse app user data", component: "Auth")
+                await MainActor.run {
+                    self.authError = .unknown(NSError(domain: "Auth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to parse user data"]))
+                }
             }
         } catch {
-            print("❌ Auth: Failed to fetch app user data: \(error.localizedDescription)")
-            self.authError = .unknown(error)
+            LoggingService.error("Failed to fetch app user data: \(error.localizedDescription)", component: "Auth")
+            await MainActor.run {
+                self.authError = .unknown(error)
+            }
         }
     }
     
     func signUp(email: String, password: String, username: String) async throws {
-        print("🔐 Auth: Attempting to create new user with email: \(email)")
+        LoggingService.authentication("Attempting to create new user with email: \(email)", component: "Auth")
         do {
             // Validate input
             guard !username.isEmpty else {
-                print("❌ Auth: Username is empty")
+                LoggingService.failure("Username is empty", component: "Auth")
                 throw AuthError.invalidCredentials
             }
             
             // Create Firebase Auth user
             let authResult = try await auth.createUser(withEmail: email, password: password)
             let uid = authResult.user.uid
-            print("✅ Auth: Successfully created Firebase Auth user with ID: \(uid)")
+            LoggingService.success("Successfully created Firebase Auth user with ID: \(uid)", component: "Auth")
             
             // Create user document in Firestore
             try await createUserDocument(uid: uid, email: email, username: username)
-            print("✅ Auth: Successfully created user document in Firestore")
-            print("✅ Auth: Sign up completed successfully - redirecting to video feed")
+            LoggingService.success("Sign up completed successfully - redirecting to video feed", component: "Auth")
             
         } catch let error as NSError {
-            print("❌ Auth: Sign up failed with error: \(error.localizedDescription)")
+            LoggingService.error("Sign up failed with error: \(error.localizedDescription)", component: "Auth")
             switch error.code {
             case AuthErrorCode.invalidEmail.rawValue:
                 throw AuthError.invalidEmail
@@ -134,14 +168,13 @@ class AuthenticationManager: ObservableObject {
     }
     
     private func createUserDocument(uid: String, email: String, username: String) async throws {
-        print("📝 Auth: Creating user document for UID: \(uid)")
+        LoggingService.authentication("Creating user document for UID: \(uid)", component: "Auth")
         let userData: [String: Any] = [
             "username": username,
             "email": email,
             "createdAt": Timestamp(date: Date()),
             "profilePicURL": "",
             "bio": "",
-            // Initialize all required statistics
             "totalVideosUploaded": 0,
             "totalVideoViews": 0,
             "totalVideoLikes": 0,
@@ -155,16 +188,16 @@ class AuthenticationManager: ObservableObject {
         ]
         
         try await firestore.collection("users").document(uid).setData(userData)
-        print("✅ Auth: Successfully created user document with initial statistics")
+        LoggingService.success("Successfully created user document with initial statistics", component: "Auth")
     }
     
     func signIn(email: String, password: String) async throws {
-        print("🔐 Auth: Attempting to sign in user with email: \(email)")
+        LoggingService.authentication("Attempting to sign in user with email: \(email)", component: "Auth")
         do {
             let result = try await auth.signIn(withEmail: email, password: password)
-            print("✅ Auth: Successfully signed in user: \(result.user.uid)")
+            LoggingService.success("Successfully signed in user: \(result.user.uid)", component: "Auth")
         } catch let error as NSError {
-            print("❌ Auth: Sign in failed with error: \(error.localizedDescription)")
+            LoggingService.error("Sign in failed with error: \(error.localizedDescription)", component: "Auth")
             switch error.code {
             case AuthErrorCode.wrongPassword.rawValue:
                 throw AuthError.invalidCredentials
@@ -179,66 +212,67 @@ class AuthenticationManager: ObservableObject {
     }
     
     func signOut() async throws {
-        print("🔐 Auth: Attempting to sign out user")
+        LoggingService.authentication("Attempting to sign out user", component: "Auth")
         do {
-            // Disable any new queries
-            firestore.settings = Firestore.firestore().settings
-            print("✅ Auth: Disabled new Firestore queries")
-            
             // Remove all Firestore listeners first
             activeListeners.forEach { $0.remove() }
             activeListeners.removeAll()
-            print("✅ Auth: Removed all Firestore listeners")
+            LoggingService.success("Removed all Firestore listeners", component: "Auth")
             
             // Remove auth state listener
             if let handle = authStateHandle {
                 auth.removeStateDidChangeListener(handle)
                 authStateHandle = nil
-                print("✅ Auth: Removed auth state listener")
+                LoggingService.success("Removed auth state listener", component: "Auth")
             }
             
-            // Clear local state
-            self.appUser = nil
-            self.isAuthenticated = false
-            self.currentUser = nil
+            // Clear local state on main actor
+            await MainActor.run {
+                self.appUser = nil
+                self.isAuthenticated = false
+                self.currentUser = nil
+            }
             UserDefaults.standard.removeObject(forKey: "userId")
-            print("✅ Auth: Cleared local state")
+            LoggingService.success("Cleared local state", component: "Auth")
             
             // Sign out from Firebase Auth
             try auth.signOut()
-            print("✅ Auth: Successfully signed out user")
+            LoggingService.success("Successfully signed out user", component: "Auth")
             
             // Wait a bit to ensure all queries are completed
             try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
             
             // Terminate Firestore instance
             try await firestore.terminate()
-            print("✅ Auth: Terminated Firestore")
+            LoggingService.success("Terminated Firestore", component: "Auth")
             
             // Wait for termination to complete
             try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
             
             // Clear Firestore persistence
             try await firestore.clearPersistence()
-            print("✅ Auth: Cleared Firestore persistence")
+            LoggingService.success("Cleared Firestore persistence", component: "Auth")
+            
+            // Reinitialize Firestore
+            initializeFirestore()
+            LoggingService.success("Reinitialized Firestore", component: "Auth")
             
             // Re-setup auth state handler for next sign in
             setupAuthStateHandler()
-            print("✅ Auth: Re-initialized auth state handler")
-            
+            LoggingService.success("Re-initialized auth state handler", component: "Auth")
         } catch {
-            print("❌ Auth: Sign out failed with error: \(error.localizedDescription)")
+            LoggingService.error("Failed to sign out: \(error.localizedDescription)", component: "Auth")
             throw AuthError.unknown(error)
         }
     }
     
     func resetPassword(email: String) async throws {
-        print("🔐 Auth: Attempting to send password reset email to: \(email)")
+        LoggingService.authentication("Attempting to send password reset email to: \(email)", component: "Auth")
         do {
             try await auth.sendPasswordReset(withEmail: email)
-            print("✅ Auth: Successfully sent password reset email")
+            LoggingService.success("Successfully sent password reset email", component: "Auth")
         } catch let error as NSError {
-            print("❌ Auth: Password reset failed with error: \(error.localizedDescription)")
+            LoggingService.error("Password reset failed with error: \(error.localizedDescription)", component: "Auth")
             switch error.code {
             case AuthErrorCode.invalidEmail.rawValue:
                 throw AuthError.invalidEmail

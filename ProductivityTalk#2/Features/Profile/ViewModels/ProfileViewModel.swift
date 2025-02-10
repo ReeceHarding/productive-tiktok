@@ -28,26 +28,52 @@ class ProfileViewModel: ObservableObject {
     @MainActor
     func loadUserData() async {
         guard let userId = UserDefaults.standard.string(forKey: "userId") else {
-            print("❌ ProfileViewModel: No user ID found")
+            LoggingService.error("No user ID found in UserDefaults", component: "Profile")
             self.error = "User not logged in"
             return
         }
         
+        // Don't reload if already loading
+        guard !isLoading else {
+            LoggingService.debug("Already loading user data, skipping", component: "Profile")
+            return
+        }
+        
         isLoading = true
-        print("📥 ProfileViewModel: Loading user data for ID: \(userId)")
+        LoggingService.debug("Loading user data for ID: \(userId)", component: "Profile")
         
         do {
             let document = try await db.collection("users").document(userId).getDocument()
-            if let user = AppUser(document: document) {
-                self.user = user
-                print("✅ ProfileViewModel: Successfully loaded user data")
+            
+            if !document.exists {
+                LoggingService.error("User document does not exist for ID: \(userId)", component: "Profile")
+                self.error = "User profile not found"
+                self.user = nil
+                isLoading = false
+                return
+            }
+            
+            guard let data = document.data() else {
+                LoggingService.error("Document exists but has no data for ID: \(userId)", component: "Profile")
+                self.error = "User profile is empty"
+                self.user = nil
+                isLoading = false
+                return
+            }
+            
+            if let appUser = AppUser(document: document) {
+                self.user = appUser
+                self.error = nil
+                LoggingService.success("Successfully loaded user data for ID: \(userId)", component: "Profile")
             } else {
-                print("❌ ProfileViewModel: Failed to parse user data")
-                self.error = "Failed to load user data"
+                LoggingService.error("Failed to parse user data for ID: \(userId)", component: "Profile")
+                self.error = "Could not load user profile"
+                self.user = nil
             }
         } catch {
-            print("❌ ProfileViewModel: Error loading user data: \(error.localizedDescription)")
-            self.error = "Failed to load user data: \(error.localizedDescription)"
+            LoggingService.error("Error loading user data: \(error.localizedDescription)", component: "Profile")
+            self.error = "Failed to load profile: \(error.localizedDescription)"
+            self.user = nil
         }
         
         isLoading = false

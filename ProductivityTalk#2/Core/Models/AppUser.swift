@@ -105,8 +105,13 @@ struct AppUser: Codable, Identifiable {
     
     // Initialize from Firestore document
     init?(document: DocumentSnapshot) {
+        guard document.exists else {
+            LoggingService.error("❌ AppUser: Failed to initialize - Document does not exist for ID: \(document.documentID)", component: "AppUser")
+            return nil
+        }
+        
         guard let data = document.data() else {
-            print("❌ AppUser: Failed to initialize - No data in document")
+            LoggingService.error("❌ AppUser: Failed to initialize - No data in document for ID: \(document.documentID)", component: "AppUser")
             return nil
         }
         
@@ -114,7 +119,16 @@ struct AppUser: Codable, Identifiable {
         guard let username = data["username"] as? String,
               let email = data["email"] as? String,
               let createdAt = (data["createdAt"] as? Timestamp)?.dateValue() else {
-            print("❌ AppUser: Failed to initialize - Missing required fields")
+            LoggingService.error("❌ AppUser: Failed to initialize - Missing required fields for ID: \(document.documentID)", component: "AppUser")
+            if let username = data["username"] {
+                LoggingService.error("Username type: \(type(of: username))", component: "AppUser")
+            }
+            if let email = data["email"] {
+                LoggingService.error("Email type: \(type(of: email))", component: "AppUser")
+            }
+            if let createdAt = data["createdAt"] {
+                LoggingService.error("CreatedAt type: \(type(of: createdAt))", component: "AppUser")
+            }
             return nil
         }
         
