@@ -8,7 +8,6 @@
 import SwiftUI
 import FirebaseCore
 import UIKit
-import GoogleSignIn
 
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
@@ -20,13 +19,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         LoggingService.success("Application launch completed", component: "AppDelegate")
         
         return true
-    }
-    
-    func application(_ app: UIApplication,
-                    open url: URL,
-                    options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        LoggingService.debug("Handling URL: \(url.absoluteString)", component: "AppDelegate")
-        return GIDSignIn.sharedInstance.handle(url)
     }
 }
 

@@ -115,13 +115,15 @@ struct MainTabView: View {
                             }
                         }
                     
-                    Text("Calendar")
-                        .tabItem {
-                            VStack {
-                                Image(systemName: "calendar")
-                                Text("Calendar")
-                            }
+                    NavigationView {
+                        NotificationSettingsView()
+                    }
+                    .tabItem {
+                        VStack {
+                            Image(systemName: "bell.badge")
+                            Text("Notifications")
                         }
+                    }
                     
                     NavigationView {
                         ProfileView()

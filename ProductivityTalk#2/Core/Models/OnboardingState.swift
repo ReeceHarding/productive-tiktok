@@ -7,7 +7,7 @@ struct OnboardingState: Codable {
     enum OnboardingStep: Int, Codable {
         case welcome
         case secondBrain
-        case calendar
+        case notifications
         case completed
     }
     

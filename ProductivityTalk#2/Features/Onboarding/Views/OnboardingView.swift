@@ -31,8 +31,8 @@ struct OnboardingView: View {
                     welcomeStep
                 case .secondBrain:
                     secondBrainStep
-                case .calendar:
-                    calendarStep
+                case .notifications:
+                    notificationsStep
                 case .completed:
                     EmptyView()
                 }
@@ -60,7 +60,7 @@ struct OnboardingView: View {
                             dismiss()
                         }
                     }) {
-                        Text(viewModel.state.currentStep == .calendar ? "Get Started" : "Next")
+                        Text(viewModel.state.currentStep == .notifications ? "Get Started" : "Next")
                             .bold()
                             .foregroundColor(.white)
                             .padding(.horizontal, 30)
@@ -129,17 +129,17 @@ struct OnboardingView: View {
         }
     }
     
-    private var calendarStep: some View {
+    private var notificationsStep: some View {
         VStack(spacing: 20) {
-            Image(systemName: "calendar")
+            Image(systemName: "bell.badge")
                 .font(.system(size: 60))
                 .foregroundColor(.blue)
             
-            Text("Turn Knowledge Into Action")
+            Text("Stay on Track")
                 .font(.title)
                 .bold()
             
-            Text("Schedule events directly from videos to put your learning into practice. Knowledge becomes power when applied!")
+            Text("Get helpful reminders to practice what you've learned. Choose when you'd like to receive daily insights!")
                 .font(.body)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
@@ -147,10 +147,10 @@ struct OnboardingView: View {
             
             // Example UI
             HStack {
-                Image(systemName: "calendar.badge.plus")
+                Image(systemName: "bell.badge")
                     .font(.title)
                     .foregroundColor(.blue)
-                Text("Schedule event")
+                Text("Daily reminders")
                     .foregroundColor(.secondary)
             }
             .padding()

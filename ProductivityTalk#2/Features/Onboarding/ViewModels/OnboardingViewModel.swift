@@ -23,8 +23,8 @@ class OnboardingViewModel: ObservableObject {
         case .welcome:
             state.currentStep = .secondBrain
         case .secondBrain:
-            state.currentStep = .calendar
-        case .calendar:
+            state.currentStep = .notifications
+        case .notifications:
             completeOnboarding()
         case .completed:
             break

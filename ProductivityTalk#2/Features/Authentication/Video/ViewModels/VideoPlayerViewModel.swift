@@ -49,7 +49,7 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private var observers: [NSKeyValueObservation] = []
     private var timeObserverToken: Any?
-    private var deinitHandler: (() -> Void)?
+    private var deinitHandler: (() async -> Void)?
     private let firestore = Firestore.firestore()
     private var preloadedPlayers: [String: AVPlayer] = [:]
     private var bufferingObserver: NSKeyValueObservation?
@@ -82,7 +82,7 @@ public class VideoPlayerViewModel: ObservableObject {
         let observersCopy = observers
         let playerCopy = player
         let timeObserverTokenCopy = timeObserverToken
-        deinitHandler = { [observersCopy, playerCopy, timeObserverTokenCopy] in
+        deinitHandler = { [observersCopy, playerCopy, timeObserverTokenCopy] () async -> Void in
             observersCopy.forEach { $0.invalidate() }
             if let token = timeObserverTokenCopy, let player = playerCopy {
                 player.removeTimeObserver(token)
@@ -128,7 +128,7 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     @MainActor
-    private func cleanup() {
+    private func cleanup() async {
         if isCleaningUp {
             return
         }
@@ -301,7 +301,7 @@ public class VideoPlayerViewModel: ObservableObject {
                     LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                     // Start buffering only when player is ready
                     do {
-                        if try await player.preroll(atRate: 1.0) {
+                        if await player.preroll(atRate: 1.0) {
                             LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
                         } else {
                             LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
@@ -350,7 +350,7 @@ public class VideoPlayerViewModel: ObservableObject {
         
         // Re-apply fade in if not muted
         Task { @MainActor in
-            try? await fadeInAudio()
+            await self.fadeInAudio()
         }
     }
     
@@ -491,9 +491,10 @@ public class VideoPlayerViewModel: ObservableObject {
         
         // Increment view count
         do {
-            try await firestore.collection("videos").document(video.id).updateData([
-                "viewCount": FieldValue.increment(Int64(1))
-            ])
+            let viewCountData: [String: SendableValue] = [
+                "viewCount": .int(1)
+            ]
+            try await firestore.collection("videos").document(video.id).updateData(viewCountData.asDictionary)
             LoggingService.success("Incremented view count for video \(video.id)", component: "PlayerVM")
         } catch {
             LoggingService.error("Failed to increment view count: \(error)", component: "PlayerVM")
@@ -648,7 +649,7 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private func prerollIfNeeded() async {
         guard let player = player else { return }
-        try? await player.preroll(atRate: 1.0)
+        await player.preroll(atRate: 1.0)
         
         await MainActor.run {
             LoggingService.video("Preroll complete for \(video.id)", component: "Player")

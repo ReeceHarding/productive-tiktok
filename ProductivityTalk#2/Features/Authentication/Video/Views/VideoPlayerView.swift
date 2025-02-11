@@ -14,8 +14,6 @@ public struct VideoPlayerView: View {
     @State private var errorMessage: String?
     @State private var showError = false
     @State private var isVisible = false
-    @State private var selectedVideo: Video?
-    @State private var showingSchedulingView = false
     @State private var loadingProgress: Double = 0
     
     init(video: Video) {
@@ -61,9 +59,7 @@ public struct VideoPlayerView: View {
                 ControlsOverlay(
                     video: video,
                     viewModel: viewModel,
-                    showComments: $showComments,
-                    selectedVideo: $selectedVideo,
-                    showingSchedulingView: $showingSchedulingView
+                    showComments: $showComments
                 )
                 .transition(.opacity.combined(with: .scale))
             }
@@ -135,17 +131,6 @@ public struct VideoPlayerView: View {
             CommentsView(video: video)
                 .presentationDragIndicator(.visible)
                 .presentationDetents([.medium, .large])
-        }
-        .sheet(isPresented: $showingSchedulingView) {
-            if let video = selectedVideo,
-               let transcript = video.transcript {
-                SchedulingView(
-                    transcript: transcript,
-                    videoTitle: video.title
-                )
-                .presentationDragIndicator(.visible)
-                .presentationDetents([.medium, .large])
-            }
         }
         .alert("Error", isPresented: $showError, presenting: errorMessage) { _ in
             Button("OK", role: .cancel) {}
@@ -226,8 +211,6 @@ private struct ControlsOverlay: View {
     let video: Video
     @ObservedObject var viewModel: VideoPlayerViewModel
     @Binding var showComments: Bool
-    @Binding var selectedVideo: Video?
-    @Binding var showingSchedulingView: Bool
     
     var body: some View {
         GeometryReader { geometry in
@@ -259,16 +242,6 @@ private struct ControlsOverlay: View {
                         ) {
                             LoggingService.debug("Comment icon tapped for video: \(video.id)", component: "Player")
                             showComments = true
-                        }
-                        
-                        // Calendar Button
-                        ControlButton(
-                            icon: "calendar.badge.plus",
-                            text: "Schedule"
-                        ) {
-                            LoggingService.debug("Calendar icon tapped for video: \(video.id)", component: "Player")
-                            selectedVideo = video
-                            showingSchedulingView = true
                         }
                     }
                     .padding(.trailing, geometry.size.width * 0.05)
