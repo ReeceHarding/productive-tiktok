@@ -48,9 +48,9 @@ public class VideoPlayerViewModel: ObservableObject {
     @Published public var isBuffering = false
     @Published public var loadingProgress: Double = 0
     
-    private var observers: [NSKeyValueObservation] = []
+    private var observers: Set<NSKeyValueObservation> = []
     private var timeObserverToken: Any?
-    private var deinitHandler: (() -> Void)?
+    private var deinitHandler: (() async -> Void)?
     private let firestore = Firestore.firestore()
     private var preloadedPlayers: [String: AVPlayer] = [:]
     private var bufferingObserver: NSKeyValueObservation?
@@ -168,7 +168,7 @@ public class VideoPlayerViewModel: ObservableObject {
             guard let self = self else { return }
             let videoId = self.video.id
             if let handler = self.deinitHandler {
-                handler()
+                await handler()
             }
             try? await Task.sleep(nanoseconds: 100_000_000) // Small delay to ensure cleanup completes
             await self.cleanup()
@@ -300,35 +300,28 @@ public class VideoPlayerViewModel: ObservableObject {
                     case .readyToPlay:
                         LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                         // Start buffering only when player is ready
-                        do {
-                            let success = await player.preroll(atRate: 1.0)
-                            if success {
-                                LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
-                            } else {
-                                LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
-                            }
-                        } catch {
-                            LoggingService.error("Preroll error for \(self.video.id): \(error.localizedDescription)", component: "Player")
+                        let success = await player.preroll(atRate: 1.0)
+                        if success {
+                            LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
+                            continuation.resume()
+                        } else {
+                            LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
+                            continuation.resume(throwing: NSError(domain: "AVPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Preroll failed"]))
                         }
                     default:
                         break
                     }
                 }
             }
-            observers.append(statusObserver)
+            observers.insert(statusObserver)
         }
         
         LoggingService.video("✅ Player setup complete for \(video.id)", component: "Player")
         isLoading = false
         
-        // Now that player is ready, attempt preroll
-        if await player.preroll(atRate: 1.0) {
-            // Store in preloaded players
-            preloadedPlayers[video.id] = player
-            LoggingService.video("✅ Successfully preloaded video \(video.id)", component: "Player")
-        } else {
-            LoggingService.error("Failed to preroll video \(video.id)", component: "Player")
-        }
+        // Store in preloaded players
+        preloadedPlayers[video.id] = player
+        LoggingService.video("✅ Successfully preloaded video \(video.id)", component: "Player")
     }
     
     private func observePlayerStatus(_ player: AVPlayer) {
@@ -353,7 +346,7 @@ public class VideoPlayerViewModel: ObservableObject {
                 }
             }
         }
-        observers.append(statusObserver)
+        observers.insert(statusObserver)
     }
     
     private func addTimeObserver(to player: AVPlayer) {
@@ -525,12 +518,12 @@ public class VideoPlayerViewModel: ObservableObject {
     
     // MARK: - Enhanced Play Method
     public func play() async {
-        guard let player = player else { return }
-        
         // Initialize player if needed
-        if player.currentItem == nil {
+        if player == nil || player?.currentItem == nil {
             await loadVideo()
         }
+        
+        guard let player = player else { return }
         
         // Start playback
         player.play()
@@ -611,7 +604,7 @@ public class VideoPlayerViewModel: ObservableObject {
                             continuation.resume(throwing: player.error ?? NSError(domain: "AVPlayer", code: -1))
                         }
                     }
-                    self.observers.append(observer)
+                    self.observers.insert(observer)
                 }
                 
                 // Now that player is ready, attempt preroll
