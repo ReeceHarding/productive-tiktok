@@ -1,7 +1,6 @@
 import Foundation
-import SwiftUI
-import os.log
 import UIKit
+import OSLog
 
 // Add logging for better debugging
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Scheduling")
@@ -12,15 +11,23 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: 
  - CalendarIntegrationManager for finding time slots and creating events
  */
 @MainActor
-final class SchedulingViewModel: ObservableObject {
+class SchedulingViewModel: ObservableObject {
     
     // MARK: - Dependencies
     private let llmService = CalendarLLMService.shared
-    private let calendarManager = CalendarIntegrationManager.shared
+    private let calendarManager: CalendarIntegrationManager
     
     // MARK: - Published Properties
-    @Published private(set) var eventProposal: EventProposal?
-    @Published private(set) var availableTimeSlots: [DateInterval] = []
+    @Published var isLoading = false
+    @Published var errorMessage: String?
+    @Published var eventCreated = false
+    @Published var createdEventId: String?
+    @Published var availableTimeSlots: [DateInterval] = []
+    @Published var selectedTime: Date?
+    @Published var eventTitle: String = ""
+    @Published var eventDescription: String = ""
+    @Published var durationMinutes: Int = 30
+    @Published var eventProposal: EventProposal?
     
     // Helper to get the presenting view controller
     private var presentingViewController: UIViewController? {
@@ -28,10 +35,14 @@ final class SchedulingViewModel: ObservableObject {
         return scene?.windows.first?.rootViewController
     }
     
+    init(calendarManager: CalendarIntegrationManager) {
+        self.calendarManager = calendarManager
+    }
+    
     // MARK: - Public Methods
     
     /**
-     Generate an event proposal using the LLM service based on video transcript and preferences
+     Generate an event proposal using Chat GPT-based `CalendarLLMService`
      */
     func generateEventProposal(transcript: String, timeOfDay: String, userPrompt: String) async throws {
         logger.debug("Generating event proposal from transcript")
@@ -40,49 +51,72 @@ final class SchedulingViewModel: ObservableObject {
             timeOfDay: timeOfDay,
             userPrompt: userPrompt
         )
-        eventProposal = EventProposal(title: title, description: description, durationMinutes: duration)
-    }
-    
-    /**
-     Find available time slots that match the desired duration
-     */
-    func findAvailableTimeSlots(forDuration durationMinutes: Int) async throws {
-        logger.debug("Finding available time slots for \(durationMinutes) minutes")
-        
-        guard let presentingVC = presentingViewController else {
-            throw NSError(domain: "SchedulingViewModel",
-                         code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "No presenting view controller found"])
-        }
-        
-        // Ensure we're authorized before proceeding
-        try await calendarManager.ensureAuthorized(presentingViewController: presentingVC)
-        
-        availableTimeSlots = try await calendarManager.findFreeTime(desiredDurationInMinutes: durationMinutes)
-    }
-    
-    /**
-     Schedule an event at the specified time
-     */
-    func scheduleEvent(title: String, description: String, startTime: Date, durationMinutes: Int) async throws {
-        logger.debug("Scheduling event: \(title) at \(startTime)")
-        
-        guard let presentingVC = presentingViewController else {
-            throw NSError(domain: "SchedulingViewModel",
-                         code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "No presenting view controller found"])
-        }
-        
-        // Ensure we're authorized before proceeding
-        try await calendarManager.ensureAuthorized(presentingViewController: presentingVC)
-        
-        let eventId = try await calendarManager.createCalendarEvent(
+        self.eventProposal = EventProposal(
             title: title,
             description: description,
-            startDate: startTime,
-            durationMinutes: durationMinutes
+            durationMinutes: duration
         )
-        logger.info("Event scheduled successfully with ID: \(eventId)")
+        logger.debug("Generated proposal => Title: \(title), Desc: \(description), Duration: \(duration) min")
+    }
+    
+    /**
+     Ask CalendarIntegrationManager for free time
+     */
+    func findAvailableTimeSlots(forDuration duration: Int) async throws {
+        isLoading = true
+        errorMessage = nil
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            calendarManager.findFreeTime(durationMinutes: duration) { [weak self] result in
+                guard let self = self else { return }
+                
+                self.isLoading = false
+                
+                switch result {
+                case .success(let timeSlots):
+                    self.availableTimeSlots = timeSlots
+                    continuation.resume()
+                case .failure(let error):
+                    self.errorMessage = error.localizedDescription
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    /**
+     Schedule the final event
+     */
+    func scheduleEvent(title: String, description: String, startTime: Date, durationMinutes: Int) async throws {
+        guard let selectedTime = selectedTime else {
+            throw NSError(domain: "SchedulingViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "Please select a time slot"])
+        }
+        
+        isLoading = true
+        errorMessage = nil
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            calendarManager.createEvent(
+                title: title,
+                description: description,
+                startDate: startTime,
+                durationMinutes: durationMinutes
+            ) { [weak self] result in
+                guard let self = self else { return }
+                
+                self.isLoading = false
+                
+                switch result {
+                case .success(let eventId):
+                    self.eventCreated = true
+                    self.createdEventId = eventId
+                    continuation.resume()
+                case .failure(let error):
+                    self.errorMessage = error.localizedDescription
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 }
 

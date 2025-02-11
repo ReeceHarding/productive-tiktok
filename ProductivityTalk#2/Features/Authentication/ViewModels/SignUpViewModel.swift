@@ -88,4 +88,42 @@ class SignUpViewModel: ObservableObject {
         
         isLoading = false
     }
+    
+    @MainActor
+    func validateUsername() {
+        if username.isEmpty {
+            validationMessage = ""
+        } else if username.count < 3 || username.count > 30 {
+            validationMessage = "Username must be between 3 and 30 characters"
+        } else {
+            validationMessage = ""
+        }
+    }
+    
+    @MainActor
+    func validatePassword() {
+        if password.isEmpty {
+            validationMessage = ""
+        } else if !isPasswordValid(password) {
+            validationMessage = "Password doesn't meet requirements"
+        } else {
+            validationMessage = ""
+        }
+    }
+    
+    @MainActor
+    func validateConfirmPassword() {
+        if confirmPassword.isEmpty {
+            validationMessage = ""
+        } else if password != confirmPassword {
+            validationMessage = "Passwords don't match"
+        } else {
+            validationMessage = ""
+        }
+    }
+    
+    func checkBiometricAvailability() {
+        // This is a placeholder for biometric availability check
+        // Implement actual biometric check if needed
+    }
 } 

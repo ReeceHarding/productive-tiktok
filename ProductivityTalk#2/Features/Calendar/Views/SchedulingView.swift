@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import OSLog
 
 /**
  SchedulingView provides a UI for scheduling events based on video content.
@@ -7,17 +8,16 @@ import SwiftUI
  CalendarIntegrationManager to find available time slots and create events.
  */
 struct SchedulingView: View {
-    @StateObject private var viewModel = SchedulingViewModel()
-    @Environment(\.dismiss) private var dismiss
-    
     let transcript: String
     let videoTitle: String
     
-    // Time of day preference
+    @StateObject private var viewModel = SchedulingViewModel(calendarManager: CalendarIntegrationManager.shared)
+    @Environment(\.dismiss) private var dismiss
+    
     @State private var selectedTimeOfDay = TimeOfDay.morning
     @State private var customPrompt = ""
-    @State private var showingEventDetails = false
-    @State private var selectedTimeSlot: DateInterval?
+    @State private var showingTimeSlots = false
+    @State private var selectedInterval: DateInterval?
     @State private var isLoading = false
     @State private var errorMessage: String?
     
@@ -31,52 +31,55 @@ struct SchedulingView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Event Preferences")) {
-                    Picker("Preferred Time", selection: $selectedTimeOfDay) {
+                Section(header: Text("Preferences")) {
+                    Picker("Time of Day", selection: $selectedTimeOfDay) {
                         ForEach(TimeOfDay.allCases, id: \.self) { time in
                             Text(time.rawValue).tag(time)
                         }
                     }
-                    
-                    TextField("Custom Instructions (Optional)", text: $customPrompt)
+                    TextField("Custom Prompt (optional)", text: $customPrompt)
                 }
                 
-                Section(header: Text("Generated Event")) {
+                // Proposed event details
+                Section(header: Text("Proposed Event")) {
                     if let proposal = viewModel.eventProposal {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(proposal.title)
                                 .font(.headline)
-                            
                             Text(proposal.description)
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
-                            
                             Text("Duration: \(proposal.durationMinutes) minutes")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .font(.footnote)
                         }
-                        .padding(.vertical, 4)
-                        
-                        Button("Find Available Times") {
+                        Button(action: {
                             Task {
                                 await findAvailableTimes()
                             }
+                        }) {
+                            Text("Find Available Times")
+                                .foregroundColor(.white)
+                                .padding()
+                                .background(Color.blue)
+                                .cornerRadius(10)
                         }
-                        .disabled(isLoading)
+                    } else {
+                        Text("No proposal yet. Tap 'Generate Proposal'")
+                            .foregroundColor(.secondary)
                     }
                 }
                 
-                if !viewModel.availableTimeSlots.isEmpty {
+                // Time slots
+                if showingTimeSlots && !viewModel.availableTimeSlots.isEmpty {
                     Section(header: Text("Available Time Slots")) {
                         ForEach(viewModel.availableTimeSlots, id: \.start) { slot in
                             Button(action: {
-                                selectedTimeSlot = slot
-                                showingEventDetails = true
+                                self.selectedInterval = slot
+                                self.scheduleIfConfirmed()
                             }) {
                                 VStack(alignment: .leading) {
-                                    Text(formatDate(slot.start))
+                                    Text(shortDate(slot.start))
                                         .font(.headline)
-                                    Text("\(formatTime(slot.start)) - \(formatTime(slot.end))")
+                                    Text("\(shortTime(slot.start)) - \(shortTime(slot.end))")
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
                                 }
@@ -85,6 +88,7 @@ struct SchedulingView: View {
                     }
                 }
                 
+                // Error
                 if let error = errorMessage {
                     Section {
                         Text(error)
@@ -92,107 +96,95 @@ struct SchedulingView: View {
                     }
                 }
             }
-            .navigationTitle("Schedule Event")
-            .navigationBarItems(trailing: Button("Cancel") {
-                dismiss()
-            })
-            .sheet(isPresented: $showingEventDetails) {
-                if let proposal = viewModel.eventProposal,
-                   let timeSlot = selectedTimeSlot {
-                    EventConfirmationView(
-                        title: proposal.title,
-                        description: proposal.description,
-                        startTime: timeSlot.start,
-                        durationMinutes: proposal.durationMinutes,
-                        onConfirm: { 
-                            Task {
-                                await scheduleEvent()
-                            }
-                        }
-                    )
+            .navigationTitle("Schedule from \(videoTitle)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
                 }
-            }
-            .task {
-                await generateEventProposal()
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Generate Proposal") {
+                        Task { await generateProposal() }
+                    }
+                }
             }
             .overlay {
                 if isLoading {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.black.opacity(0.2))
+                    ZStack {
+                        Color.black.opacity(0.2)
+                            .ignoresSafeArea()
+                        ProgressView("Loading...")
+                            .scaleEffect(1.2)
+                            .padding()
+                            .background(Color.white.opacity(0.9))
+                            .cornerRadius(12)
+                    }
                 }
             }
         }
     }
     
-    private func generateEventProposal() async {
+    private func generateProposal() async {
         isLoading = true
-        errorMessage = nil
-        
         do {
             try await viewModel.generateEventProposal(
                 transcript: transcript,
-                timeOfDay: selectedTimeOfDay.rawValue,
+                timeOfDay: selectedTimeOfDay.rawValue.lowercased(),
                 userPrompt: customPrompt
             )
         } catch {
-            errorMessage = "Failed to generate event proposal: \(error.localizedDescription)"
+            errorMessage = "Failed generating proposal: \(error.localizedDescription)"
         }
-        
         isLoading = false
     }
     
     private func findAvailableTimes() async {
         guard let proposal = viewModel.eventProposal else { return }
-        
         isLoading = true
-        errorMessage = nil
-        
         do {
             try await viewModel.findAvailableTimeSlots(forDuration: proposal.durationMinutes)
+            self.showingTimeSlots = true
         } catch {
-            errorMessage = "Failed to find available times: \(error.localizedDescription)"
+            errorMessage = "Failed to find time slots: \(error.localizedDescription)"
         }
-        
         isLoading = false
     }
     
-    private func scheduleEvent() async {
+    private func scheduleIfConfirmed() {
         guard let proposal = viewModel.eventProposal,
-              let timeSlot = selectedTimeSlot else { return }
-        
-        isLoading = true
-        errorMessage = nil
-        
-        do {
-            try await viewModel.scheduleEvent(
-                title: proposal.title,
-                description: proposal.description,
-                startTime: timeSlot.start,
-                durationMinutes: proposal.durationMinutes
-            )
-            dismiss()
-        } catch {
-            errorMessage = "Failed to schedule event: \(error.localizedDescription)"
-            showingEventDetails = false
+              let timeSlot = selectedInterval else {
+            return
         }
-        
-        isLoading = false
+        // Confirm scheduling
+        Task {
+            isLoading = true
+            do {
+                try await viewModel.scheduleEvent(
+                    title: proposal.title,
+                    description: proposal.description,
+                    startTime: timeSlot.start,
+                    durationMinutes: proposal.durationMinutes
+                )
+                dismiss() // close
+            } catch {
+                errorMessage = "Error scheduling: \(error.localizedDescription)"
+            }
+            isLoading = false
+        }
     }
     
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter.string(from: date)
+    private func shortDate(_ date: Date) -> String {
+        let df = DateFormatter()
+        df.dateStyle = .medium
+        df.timeStyle = .none
+        return df.string(from: date)
     }
     
-    private func formatTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+    private func shortTime(_ date: Date) -> String {
+        let tf = DateFormatter()
+        tf.dateStyle = .none
+        tf.timeStyle = .short
+        return tf.string(from: date)
     }
 }
 

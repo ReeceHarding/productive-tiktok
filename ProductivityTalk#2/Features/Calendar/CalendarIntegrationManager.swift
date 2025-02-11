@@ -1,228 +1,267 @@
-import Foundation
-import UIKit
 import SwiftUI
 import os.log
-import GoogleAPIClientForRESTCore
 import GoogleSignIn
 import GTMAppAuth
-
-// Add logging for better debugging
-private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "CalendarIntegration")
+import GoogleAPIClientForRESTCore
+import Foundation
+import OSLog
 
 /**
  CalendarIntegrationManager is responsible for:
  - Authenticating user with Google (OAuth 2.0).
  - Checking or refreshing tokens.
  - Creating events in the user's primary calendar.
- - Querying free busy times to find open slots.
- 
+ - Querying free/busy times to find open slots.
 
+ This version uses the official GTLRCalendar classes instead of custom GTLRQuery.
  
- Ensure your Info.plist has the required Google Reversed Client ID entries. 
+ Make sure you have 'pod GoogleAPIClientForREST/Calendar' or a SwiftPM approach that brings in
+ the GTLRCalendar library.
  */
 final class CalendarIntegrationManager: ObservableObject {
     
     static let shared = CalendarIntegrationManager()
     
-    // The service object for interacting with Google Calendar
-    private var service: GTLRService?
-    private let calendarBaseURL = "https://www.googleapis.com/calendar/v3/"
+    // Logger for debug
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "CalendarIntegrationManager", category: "Calendar")
     
-    // OAuth token storage
-    @Published var currentAuthorization: GIDGoogleUser?
+    // The GTLRService for calendar
+    private var service: GTLRService
+    
+    // Calendar base URL
+    private let calendarBaseURL = "https://www.googleapis.com/calendar/v3"
+    
+    // Current authorization state
+    private var currentAuthorization: GIDGoogleUser?
     
     private init() {
-        logger.info("CalendarIntegrationManager initialized")
+        self.service = GTLRService()
+        service.rootURLString = calendarBaseURL
         setupService()
     }
     
+    // Setup GTLR service object
     private func setupService() {
-        service = GTLRService()
-        service?.rootURLString = self.calendarBaseURL
-        service?.isRetryEnabled = true
-        logger.debug("Calendar service initialized with base URL: \(self.calendarBaseURL)")
+        service.shouldFetchNextPages = true
+        service.isRetryEnabled = true
+        logger.debug("Calendar service configured with URL: \(self.calendarBaseURL)")
+    }
+    
+    func ensureAuthorization(completion: @escaping (Bool) -> Void) {
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.logger.debug("Starting authorization check")
+            if self.service.authorizer != nil {
+                self.logger.debug("Valid token found")
+                completion(true)
+            } else {
+                self.logger.debug("No valid token, initiating sign in")
+                self.signIn { success in
+                    if success {
+                        self.logger.debug("Sign in successful")
+                        completion(true)
+                    } else {
+                        self.logger.debug("Sign in failed")
+                        completion(false)
+                    }
+                }
+            }
+        }
+        DispatchQueue.main.async(execute: workItem)
     }
     
     /**
-     Check if we have a saved auth state from previous sessions. 
+     Check if we have a saved auth state from previous sessions.
      If so, restore it; if not, user must log in.
      */
     func restorePreviousSignInIfAvailable() {
+        logger.debug("Attempting to restore previous Google sign-in.")
         GIDSignIn.sharedInstance.restorePreviousSignIn { [weak self] user, error in
             if let error = error {
-                logger.error("Failed to restore sign in: \(error.localizedDescription)")
+                self?.logger.error("Failed to restore sign in: \(error.localizedDescription)")
                 return
             }
+            guard let self = self else { return }
             if let user = user {
-                self?.currentAuthorization = user
+                self.currentAuthorization = user
                 Task {
-                    do {
-                        let auth = user.fetcherAuthorizer
-                        self?.service?.authorizer = auth
-                        logger.info("Successfully restored previous sign in")
-                    } catch {
-                        logger.error("Failed to refresh authentication: \(error.localizedDescription)")
-                    }
+                    let auth = user.fetcherAuthorizer
+                    self.service.authorizer = auth
+                    self.logger.info("Successfully restored previous sign in.")
                 }
             }
         }
     }
     
     /**
-     Start the Google OAuth sign-in flow if needed. 
+     Start the Google OAuth sign-in flow if needed.
      Provide a SwiftUI or UIKit context for presenting the authentication.
      */
-    func signIn(presentingViewController: UIViewController) async throws {
-        logger.debug("Starting Google OAuth sign-in flow...")
-        
-        guard let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String else {
-            throw NSError(domain: "CalendarIntegrationManager",
-                         code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "GIDClientID not found in Info.plist"])
-        }
-        
-        let config = GIDConfiguration(clientID: clientID)
-        let scopes = [
-            "https://www.googleapis.com/auth/calendar",
-            "https://www.googleapis.com/auth/calendar.events"
-        ]
-        
-        do {
-            let signInResult = try await GIDSignIn.sharedInstance.signIn(
-                withPresenting: presentingViewController,
-                hint: nil,
-                additionalScopes: scopes
-            )
+    private func signIn(completion: @escaping (Bool) -> Void) {
+        let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        let rootViewController = scene?.windows.first?.rootViewController ?? UIViewController()
+        GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController) { [weak self] signInResult, error in
+            if let error = error {
+                self?.logger.error("Sign in failed: \(error.localizedDescription)")
+                completion(false)
+                return
+            }
             
-            let user = signInResult.user
-            currentAuthorization = user
-            service?.authorizer = user.fetcherAuthorizer
-            logger.info("Successfully signed in with Google")
-        } catch {
-            logger.error("Sign in failed: \(error.localizedDescription)")
-            throw error
+            guard let signInResult = signInResult else {
+                self?.logger.error("Sign in error: no user object returned.")
+                completion(false)
+                return
+            }
+            
+            guard let self = self else { return }
+            self.currentAuthorization = signInResult.user
+            self.service.authorizer = signInResult.user.fetcherAuthorizer
+            self.logger.info("Successfully signed in with Google. User: \(signInResult.user.userID ?? "N/A")")
+            completion(true)
         }
     }
     
     /**
      Check if we have valid auth:
-     - If no, prompt signIn
+     - If not, prompt signIn
      - If yes, proceed
+     
+     Must be called on main actor or ensure main thread usage for signIn because it triggers UI.
      */
     func ensureAuthorized(presentingViewController: UIViewController) async throws {
+        logger.debug("ensureAuthorized called - Checking for existing auth.")
         if currentAuthorization == nil {
-            try await signIn(presentingViewController: presentingViewController)
+            logger.debug("No currentAuthorization, so calling signIn() now.")
+            return try await withCheckedThrowingContinuation { continuation in
+                signIn { success in
+                    if success {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: NSError(domain: "CalendarIntegrationManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to sign in"]))
+                    }
+                }
+            }
+        } else {
+            logger.debug("Already authorized - continuing.")
         }
     }
     
     /**
-     Finds open time slots within a given day range. 
-     For simplicity, we'll just demonstrate the freebusy request for the next 7 days.
+     Finds open time slots within a given day range using the official GTLRCalendarQuery_Freebusy.
      
      - Parameter desiredDurationInMinutes: Duration that user wants to block off
-     
      - Returns: A list of Date intervals representing free time windows
      */
-    func findFreeTime(desiredDurationInMinutes: Int) async throws -> [DateInterval] {
-        logger.info("Finding free time of at least \(desiredDurationInMinutes) minutes in the next 7 days...")
-        
-        guard let service = service else {
-            throw NSError(domain: "CalendarIntegrationManager",
-                         code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "Calendar service not initialized"])
-        }
+    func findFreeTime(durationMinutes: Int, completion: @escaping (Result<[DateInterval], Error>) -> Void) {
+        self.logger.info("🔍 Finding free time slots of \(durationMinutes) minutes in next 7 days")
         
         let now = Date()
-        let sevenDaysFromNow = Calendar.current.date(byAdding: .day, value: 7, to: now)!
+        let calendar = Calendar.current
+        guard let sevenDaysFromNow = calendar.date(byAdding: .day, value: 7, to: now) else {
+            self.logger.error("❌ Could not compute next 7 days from now.")
+            completion(.failure(NSError(domain: "CalendarIntegrationManager",
+                                     code: -2,
+                                     userInfo: [NSLocalizedDescriptionKey: "Could not compute next 7 days from now"])))
+            return
+        }
         
-        // Create the freebusy request
-        let requestDict: [String: Any] = [
-            "timeMin": GTLRDateTime(date: now).rfc3339String,
-            "timeMax": GTLRDateTime(date: sevenDaysFromNow).rfc3339String,
-            "items": [["id": "primary"]],
-            "timeZone": TimeZone.current.identifier
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
+        
+        // Build a FreeBusyRequest object using generic GTLRObject
+        let freeBusyReq = GTLRObject()
+        freeBusyReq.json = [
+            "timeMin": dateFormatter.string(from: now),
+            "timeMax": dateFormatter.string(from: sevenDaysFromNow),
+            "timeZone": TimeZone.current.identifier,
+            "items": [["id": "primary"]]
         ]
         
-        let path = "freeBusy"
+        // Create query using generic GTLRQuery
         let query = GTLRQuery(
-            pathURITemplate: path,
+            pathURITemplate: "calendar/v3/freeBusy",
             httpMethod: "POST",
             pathParameterNames: []
         )
-        query.json = NSMutableDictionary(dictionary: requestDict)
+        query.bodyObject = freeBusyReq
+        query.expectedObjectClass = GTLRObject.self
         
-        do {
-            let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[DateInterval], Error>) in
-                service.executeQuery(query) { callbackTicket, result, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                        return
-                    }
-                    
-                    guard let response = result as? [String: Any],
-                          let calendars = response["calendars"] as? [String: Any],
-                          let primary = calendars["primary"] as? [String: Any],
-                          let busyPeriods = primary["busy"] as? [[String: String]] else {
-                        continuation.resume(throwing: NSError(domain: "CalendarIntegrationManager",
-                                                           code: -1,
-                                                           userInfo: [NSLocalizedDescriptionKey: "Invalid response format"]))
-                        return
-                    }
-                    
-                    do {
-                        let busyIntervals = try busyPeriods.map { period -> DateInterval in
-                            guard let start = GTLRDateTime(rfc3339String: period["start"]!)?.date,
-                                  let end = GTLRDateTime(rfc3339String: period["end"]!)?.date else {
-                                throw NSError(domain: "CalendarIntegrationManager",
-                                            code: -1,
-                                            userInfo: [NSLocalizedDescriptionKey: "Invalid date format in response"])
-                            }
-                            return DateInterval(start: start, duration: end.timeIntervalSince(start))
-                        }
-                        
-                        let freeSlots = self.findFreeSlots(between: busyIntervals,
-                                                         from: now,
-                                                         to: sevenDaysFromNow,
-                                                         minimumDuration: TimeInterval(desiredDurationInMinutes * 60))
-                        continuation.resume(returning: freeSlots)
-                    } catch {
-                        continuation.resume(throwing: error)
-                    }
-                }
+        self.logger.debug("📤 Executing Calendar FreeBusy query")
+        
+        service.executeQuery(query) { [weak self] (ticket, result, error) in
+            guard let self = self else { return }
+            
+            if let error = error {
+                self.logger.error("❌ Failed to fetch free/busy: \(error.localizedDescription)")
+                completion(.failure(error))
+                return
             }
             
-            return result
-        } catch {
-            logger.error("Failed to fetch free/busy: \(error.localizedDescription)")
-            throw error
+            guard let response = result as? GTLRObject,
+                  let jsonDict = response.json as? [String: Any],
+                  let calendars = jsonDict["calendars"] as? [String: [String: Any]],
+                  let primaryFB = calendars["primary"],
+                  let busyPeriods = primaryFB["busy"] as? [[String: String]] else {
+                let unknownErr = NSError(domain: "CalendarIntegrationManager",
+                                       code: -3,
+                                       userInfo: [NSLocalizedDescriptionKey: "Invalid free/busy response format."])
+                self.logger.error("❌ FreeBusy response was not in expected format or missing 'primary' calendar.")
+                completion(.failure(unknownErr))
+                return
+            }
+            
+            var busyIntervals: [DateInterval] = []
+            
+            for period in busyPeriods {
+                guard let startStr = period["start"],
+                      let endStr = period["end"],
+                      let startDate = dateFormatter.date(from: startStr),
+                      let endDate = dateFormatter.date(from: endStr) else {
+                    continue
+                }
+                busyIntervals.append(DateInterval(start: startDate, end: endDate))
+            }
+            
+            let freeSlots = self.findFreeSlots(
+                between: busyIntervals,
+                from: now,
+                to: sevenDaysFromNow,
+                minimumDuration: TimeInterval(durationMinutes * 60)
+            )
+            self.logger.info("✅ Found \(freeSlots.count) available time slots")
+            completion(.success(freeSlots))
         }
     }
     
     private func findFreeSlots(between busyPeriods: [DateInterval],
-                             from startDate: Date,
-                             to endDate: Date,
-                             minimumDuration: TimeInterval) -> [DateInterval] {
+                               from startDate: Date,
+                               to endDate: Date,
+                               minimumDuration: TimeInterval) -> [DateInterval] {
+        logger.debug("Determining free slots from \(startDate) to \(endDate), given busy intervals. total busy intervals=\(busyPeriods.count)")
         var freeSlots: [DateInterval] = []
         var currentStart = startDate
         
         // Sort busy periods by start time
-        let sortedBusyPeriods = busyPeriods.sorted { $0.start < $1.start }
+        let sortedBusy = busyPeriods.sorted { $0.start < $1.start }
         
-        // Find gaps between busy periods
-        for busy in sortedBusyPeriods {
+        for busy in sortedBusy {
             let gap = busy.start.timeIntervalSince(currentStart)
             if gap >= minimumDuration {
                 freeSlots.append(DateInterval(start: currentStart, duration: gap))
             }
-            currentStart = busy.end
+            // Move currentStart to the end of this busy block if that is further in time
+            if busy.end > currentStart {
+                currentStart = busy.end
+            }
         }
         
-        // Check final gap to end date
+        // Finally, check the gap until endDate
         let finalGap = endDate.timeIntervalSince(currentStart)
         if finalGap >= minimumDuration {
             freeSlots.append(DateInterval(start: currentStart, duration: finalGap))
         }
         
+        logger.debug("Returning \(freeSlots.count) free slots to caller.")
         return freeSlots
     }
     
@@ -237,60 +276,60 @@ final class CalendarIntegrationManager: ObservableObject {
      
      - Returns: The newly created event ID if successful
      */
-    func createCalendarEvent(title: String,
-                           description: String,
-                           startDate: Date,
-                           durationMinutes: Int) async throws -> String {
-        logger.debug("Creating calendar event: '\(title)' starting at \(startDate) for \(durationMinutes) minutes")
-        
-        guard let service = service else {
-            throw NSError(domain: "CalendarIntegrationManager",
-                         code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "Calendar service not initialized"])
-        }
+    func createEvent(title: String, description: String, startDate: Date, durationMinutes: Int, completion: @escaping (Result<String, Error>) -> Void) {
+        self.logger.debug("Creating calendar event: '\(title)' starting at \(startDate) for \(durationMinutes) minutes.")
         
         let endDate = Calendar.current.date(byAdding: .minute, value: durationMinutes, to: startDate)!
         
-        let eventDict: [String: Any] = [
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
+        
+        // Build the event object using generic GTLRObject
+        let event = GTLRObject()
+        event.json = [
             "summary": title,
             "description": description,
-            "start": ["dateTime": GTLRDateTime(date: startDate).rfc3339String,
-                     "timeZone": TimeZone.current.identifier],
-            "end": ["dateTime": GTLRDateTime(date: endDate).rfc3339String,
-                   "timeZone": TimeZone.current.identifier]
+            "start": [
+                "dateTime": dateFormatter.string(from: startDate),
+                "timeZone": TimeZone.current.identifier
+            ],
+            "end": [
+                "dateTime": dateFormatter.string(from: endDate),
+                "timeZone": TimeZone.current.identifier
+            ]
         ]
         
-        let path = "/calendars/primary/events"
+        // Create insert query using generic GTLRQuery
         let query = GTLRQuery(
-            pathURITemplate: path,
+            pathURITemplate: "calendar/v3/calendars/{calendarId}/events",
             httpMethod: "POST",
-            pathParameterNames: []
+            pathParameterNames: ["calendarId"]
         )
-        query.json = NSMutableDictionary(dictionary: eventDict)
+        query.additionalURLQueryParameters = ["calendarId": "primary"]
+        query.bodyObject = event
+        query.expectedObjectClass = GTLRObject.self
         
-        do {
-            let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
-                service.executeQuery(query) { callbackTicket, result, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                        return
-                    }
-                    if let response = result as? [String: Any],
-                       let eventId = response["id"] as? String {
-                        continuation.resume(returning: eventId)
-                    } else {
-                        continuation.resume(throwing: NSError(domain: "CalendarIntegrationManager",
-                                                           code: -1,
-                                                           userInfo: [NSLocalizedDescriptionKey: "Invalid response type"]))
-                    }
-                }
+        self.logger.debug("Executing event insert query now.")
+        service.executeQuery(query) { [weak self] ticket, result, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                self.logger.error("Failed to create calendar event: \(error.localizedDescription)")
+                completion(.failure(error))
+                return
             }
             
-            logger.info("Successfully created calendar event with ID: \(result)")
-            return result
-        } catch {
-            logger.error("Failed to create calendar event: \(error.localizedDescription)")
-            throw error
+            guard let createdEvent = result as? GTLRObject,
+                  let json = createdEvent.json as? [String: Any],
+                  let eventId = json["id"] as? String else {
+                let invalidRespError = NSError(domain: "CalendarIntegrationManager",
+                                             code: -2,
+                                             userInfo: [NSLocalizedDescriptionKey: "Invalid event response or missing event ID"])
+                completion(.failure(invalidRespError))
+                return
+            }
+            self.logger.info("Successfully created calendar event with ID: \(eventId)")
+            completion(.success(eventId))
         }
     }
 } 

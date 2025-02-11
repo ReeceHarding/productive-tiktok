@@ -86,11 +86,8 @@ struct SignUpView: View {
                                 text: $viewModel.username,
                                 contentType: .username
                             )
-                            .onChange(of: viewModel.username) { _ in
-                                impactGenerator.impactOccurred(intensity: 0.3)
-                                Task { @MainActor in
-                                    viewModel.updateValidation()
-                                }
+                            .onChange(of: viewModel.username) { oldValue, newValue in
+                                viewModel.validateUsername()
                             }
                             
                             CustomTextField(
@@ -100,11 +97,8 @@ struct SignUpView: View {
                                 text: $viewModel.password,
                                 contentType: .newPassword
                             )
-                            .onChange(of: viewModel.password) { _ in
-                                impactGenerator.impactOccurred(intensity: 0.3)
-                                Task { @MainActor in
-                                    viewModel.updateValidation()
-                                }
+                            .onChange(of: viewModel.password) { oldValue, newValue in
+                                viewModel.validatePassword()
                             }
                             
                             CustomTextField(
@@ -114,11 +108,8 @@ struct SignUpView: View {
                                 text: $viewModel.confirmPassword,
                                 contentType: .newPassword
                             )
-                            .onChange(of: viewModel.confirmPassword) { _ in
-                                impactGenerator.impactOccurred(intensity: 0.3)
-                                Task { @MainActor in
-                                    viewModel.updateValidation()
-                                }
+                            .onChange(of: viewModel.confirmPassword) { oldValue, newValue in
+                                viewModel.validateConfirmPassword()
                             }
                         }
                         .padding(.horizontal, 20)
@@ -211,10 +202,11 @@ struct SignUpView: View {
                         }
                     }
             }
-            .onChange(of: scenePhase) { newPhase in
+            .onChange(of: scenePhase) { oldPhase, newPhase in
                 if newPhase == .active {
                     notificationGenerator.prepare()
                     impactGenerator.prepare()
+                    viewModel.checkBiometricAvailability()
                 }
             }
         }
