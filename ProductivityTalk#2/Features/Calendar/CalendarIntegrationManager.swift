@@ -135,34 +135,33 @@ final class CalendarIntegrationManager: ObservableObject {
         let now = Date()
         let sevenDaysFromNow = Calendar.current.date(byAdding: .day, value: 7, to: now)!
         
-        // Create the freebusy request
-        let requestDict: [String: Any] = [
-            "timeMin": GTLRDateTime(date: now).rfc3339String,
-            "timeMax": GTLRDateTime(date: sevenDaysFromNow).rfc3339String,
-            "items": [["id": "primary"]],
-            "timeZone": TimeZone.current.identifier
-        ]
+        // Create the freebusy request using proper GTLR objects
+        let freeBusyRequest = GTLRCalendar_FreeBusyRequest()
+        freeBusyRequest.timeMin = GTLRDateTime(date: now)
+        freeBusyRequest.timeMax = GTLRDateTime(date: sevenDaysFromNow)
+        freeBusyRequest.timeZone = TimeZone.current.identifier
         
-        let path = "freeBusy"
-        let query = GTLRQuery(
-            pathURITemplate: path,
-            httpMethod: "POST",
-            pathParameterNames: []
-        )
-        query.json = NSMutableDictionary(dictionary: requestDict)
+        // Create the calendar item
+        let calendarItem = GTLRCalendar_FreeBusyRequestItem()
+        calendarItem.identifier = "primary"
+        freeBusyRequest.items = [calendarItem]
+        
+        // Create the query
+        let query = GTLRCalendarQuery_FreebusyQuery.query(withObject: freeBusyRequest)
         
         do {
             let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[DateInterval], Error>) in
                 service.executeQuery(query) { callbackTicket, result, error in
                     if let error = error {
+                        logger.error("Free/busy query failed: \(error.localizedDescription)")
                         continuation.resume(throwing: error)
                         return
                     }
                     
-                    guard let response = result as? [String: Any],
-                          let calendars = response["calendars"] as? [String: Any],
-                          let primary = calendars["primary"] as? [String: Any],
-                          let busyPeriods = primary["busy"] as? [[String: String]] else {
+                    guard let response = result as? GTLRCalendar_FreeBusyResponse,
+                          let calendars = response.calendars as? [String: GTLRCalendar_FreeBusyCalendar],
+                          let primary = calendars["primary"] else {
+                        logger.error("Invalid response format from free/busy query")
                         continuation.resume(throwing: NSError(domain: "CalendarIntegrationManager",
                                                            code: -1,
                                                            userInfo: [NSLocalizedDescriptionKey: "Invalid response format"]))
@@ -170,22 +169,26 @@ final class CalendarIntegrationManager: ObservableObject {
                     }
                     
                     do {
-                        let busyIntervals = try busyPeriods.map { period -> DateInterval in
-                            guard let start = GTLRDateTime(rfc3339String: period["start"]!)?.date,
-                                  let end = GTLRDateTime(rfc3339String: period["end"]!)?.date else {
-                                throw NSError(domain: "CalendarIntegrationManager",
-                                            code: -1,
-                                            userInfo: [NSLocalizedDescriptionKey: "Invalid date format in response"])
+                        let busyIntervals = try primary.busy?.compactMap { period -> DateInterval? in
+                            guard let start = period.start?.date,
+                                  let end = period.end?.date else {
+                                logger.warning("Invalid date format in busy period")
+                                return nil
                             }
                             return DateInterval(start: start, duration: end.timeIntervalSince(start))
-                        }
+                        } ?? []
+                        
+                        logger.debug("Found \(busyIntervals.count) busy intervals")
                         
                         let freeSlots = self.findFreeSlots(between: busyIntervals,
                                                          from: now,
                                                          to: sevenDaysFromNow,
                                                          minimumDuration: TimeInterval(desiredDurationInMinutes * 60))
+                        
+                        logger.info("Found \(freeSlots.count) free slots of at least \(desiredDurationInMinutes) minutes")
                         continuation.resume(returning: freeSlots)
                     } catch {
+                        logger.error("Error processing free/busy response: \(error.localizedDescription)")
                         continuation.resume(throwing: error)
                     }
                 }
