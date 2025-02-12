@@ -49,6 +49,7 @@ public class VideoPlayerViewModel: ObservableObject {
     @Published public var isBuffering = false
     @Published public var loadingProgress: Double = 0
     @Published public var isSubscribedToNotifications = false
+    @Published public var toastMessage: String?
     
     private var observers: Set<NSKeyValueObservation> = []
     private var timeObserverToken: Any?
@@ -429,6 +430,9 @@ public class VideoPlayerViewModel: ObservableObject {
             throw NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not logged in"])
         }
         
+        LoggingService.debug("🧠 Starting addToSecondBrain for video \(video.id)", component: "Player")
+        LoggingService.debug("Current state - isInSecondBrain: \(isInSecondBrain), brainCount: \(brainCount)", component: "Player")
+        
         let wasInSecondBrain = isInSecondBrain
         
         do {
@@ -441,14 +445,20 @@ public class VideoPlayerViewModel: ObservableObject {
             // Get reference to the video document
             let videoRef = firestore.collection("videos").document(video.id)
             
+            LoggingService.debug("🔄 Starting Firestore transaction", component: "Player")
+            
             let transactionResult = try await firestore.runTransaction { (transaction, errorPointer) -> Any? in
                 let secondBrainDoc: DocumentSnapshot
                 let videoDoc: DocumentSnapshot
                 
                 do {
+                    LoggingService.debug("📄 Fetching documents in transaction", component: "Player")
                     secondBrainDoc = try transaction.getDocument(secondBrainRef)
                     videoDoc = try transaction.getDocument(videoRef)
+                    LoggingService.debug("✅ Successfully fetched documents", component: "Player")
+                    LoggingService.debug("Second brain doc exists: \(secondBrainDoc.exists)", component: "Player")
                 } catch let fetchError as NSError {
+                    LoggingService.error("❌ Error fetching documents: \(fetchError.localizedDescription)", component: "Player")
                     errorPointer?.pointee = fetchError
                     return nil
                 }
@@ -459,6 +469,7 @@ public class VideoPlayerViewModel: ObservableObject {
                 ], forDocument: videoRef)
                 
                 if secondBrainDoc.exists {
+                    LoggingService.debug("🗑️ Removing from second brain", component: "Player")
                     // Remove from second brain
                     transaction.deleteDocument(secondBrainRef)
                     transaction.updateData([
@@ -466,9 +477,10 @@ public class VideoPlayerViewModel: ObservableObject {
                         "updatedAt": FieldValue.serverTimestamp()
                     ], forDocument: videoRef)
                     
-                    LoggingService.success("Removed video \(self.video.id) from second brain", component: "Player")
-                    return true as Any
+                    LoggingService.success("✅ Removed video \(self.video.id) from second brain", component: "Player")
+                    return false as Any  // Return false for removal
                 } else {
+                    LoggingService.debug("➕ Adding to second brain", component: "Player")
                     // Extract fields from video document
                     let videoData = videoDoc.data() ?? [:]
                     let quotes = videoData["quotes"] as? [String] ?? []
@@ -489,7 +501,7 @@ public class VideoPlayerViewModel: ObservableObject {
                         "savedAt": FieldValue.serverTimestamp()
                     ]
                     
-                    LoggingService.debug("Adding video to second brain with data: \(secondBrainData)", component: "Player")
+                    LoggingService.debug("📝 Adding video to second brain with data: \(secondBrainData)", component: "Player")
                     transaction.setData(secondBrainData, forDocument: secondBrainRef)
                     
                     transaction.updateData([
@@ -497,32 +509,53 @@ public class VideoPlayerViewModel: ObservableObject {
                         "updatedAt": FieldValue.serverTimestamp()
                     ], forDocument: videoRef)
                     
-                    LoggingService.success("Added video \(self.video.id) to second brain with \(quotes.count) quotes", component: "Player")
-                    return false as Any
+                    LoggingService.success("✅ Added video \(self.video.id) to second brain with \(quotes.count) quotes", component: "Player")
+                    return true as Any  // Return true for addition
                 }
             }
             
             // Update UI state after transaction completes
             await MainActor.run {
-                if let wasRemoved = transactionResult as? Bool {
-                    if wasRemoved {
-                        self.isInSecondBrain = false
-                        self.brainCount -= 1
-                        self.showBrainAnimation = false
-                        LoggingService.debug("UI updated after removing from second brain", component: "Player")
-                    } else {
+                if let wasAdded = transactionResult as? Bool {
+                    if wasAdded {
                         self.isInSecondBrain = true
                         self.brainCount += 1
                         self.showBrainAnimation = true
-                        LoggingService.debug("UI updated after adding to second brain", component: "Player")
+                        LoggingService.debug("🔄 UI updated after adding to second brain - new brainCount: \(self.brainCount)", component: "Player")
+                        
+                        // Show toast message
+                        self.toastMessage = "Added to Second Brain"
+                        
+                        // Reset animation and toast state after delay
+                        Task {
+                            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                            self.showBrainAnimation = false
+                            self.toastMessage = nil
+                        }
+                    } else {
+                        self.isInSecondBrain = false
+                        self.brainCount -= 1
+                        self.showBrainAnimation = false
+                        LoggingService.debug("🔄 UI updated after removing from second brain - new brainCount: \(self.brainCount)", component: "Player")
+                        
+                        // Show toast message
+                        self.toastMessage = "Removed from Second Brain"
+                        
+                        // Reset toast state after delay
+                        Task {
+                            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                            self.toastMessage = nil
+                        }
                     }
+                } else {
+                    LoggingService.error("❌ Transaction result was nil", component: "Player")
                 }
             }
         } catch {
             await MainActor.run {
                 self.isInSecondBrain = wasInSecondBrain
             }
-            LoggingService.error("Failed to toggle second brain for video \(video.id): \(error.localizedDescription)", component: "Player")
+            LoggingService.error("❌ Failed to toggle second brain for video \(video.id): \(error.localizedDescription)", component: "Player")
             throw error
         }
     }

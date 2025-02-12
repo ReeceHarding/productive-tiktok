@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import FirebaseFirestore
+import UserNotifications
 
 public struct VideoPlayerView: View {
     let video: Video
@@ -15,6 +16,9 @@ public struct VideoPlayerView: View {
     @State private var showError = false
     @State private var isVisible = false
     @State private var loadingProgress: Double = 0
+    @State private var showToast = false
+    @State private var toastMessage = ""
+    private let hapticManager = UINotificationFeedbackGenerator()
     
     init(video: Video) {
         self.video = video
@@ -75,6 +79,13 @@ public struct VideoPlayerView: View {
             if viewModel.showBrainAnimation {
                 ConfettiView(position: viewModel.brainAnimationPosition)
                     .accessibilityHidden(true)
+            }
+            
+            // Toast Message
+            if let message = viewModel.toastMessage {
+                ToastView(message: message)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(2)
             }
         }
         .background(Color.black)
@@ -216,40 +227,97 @@ private struct ControlsOverlay: View {
                         ControlButton(
                             icon: viewModel.isInSecondBrain ? "brain.head.profile.fill" : "brain.head.profile",
                             text: "\(viewModel.brainCount)",
-                            isActive: viewModel.isInSecondBrain
-                        ) {
-                            LoggingService.debug("Brain icon tapped for video: \(video.id)", component: "Player")
-                            Task {
-                                do {
-                                    try await viewModel.addToSecondBrain()
-                                } catch {
-                                    LoggingService.error("Error adding to second brain: \(error)", component: "Player")
+                            isActive: viewModel.isInSecondBrain,
+                            action: {
+                                LoggingService.debug("Brain icon tapped for video: \(video.id)", component: "Player")
+                                Task {
+                                    do {
+                                        try await viewModel.addToSecondBrain()
+                                    } catch {
+                                        LoggingService.error("Error adding to second brain: \(error)", component: "Player")
+                                    }
                                 }
+                            },
+                            onLocationUpdate: { location in
+                                viewModel.brainAnimationPosition = location
                             }
-                        }
+                        )
                         
                         // Comment Button
                         ControlButton(
                             icon: "bubble.left",
-                            text: "\(video.commentCount)"
-                        ) {
-                            LoggingService.debug("Comment icon tapped for video: \(video.id)", component: "Player")
-                            showComments = true
-                        }
+                            text: "\(video.commentCount)",
+                            isActive: false,
+                            action: {
+                                LoggingService.debug("Comment icon tapped for video: \(video.id)", component: "Player")
+                                showComments = true
+                            },
+                            onLocationUpdate: { _ in }
+                        )
                         
                         // Notification Bell Button
                         ControlButton(
                             icon: viewModel.isSubscribedToNotifications ? "bell.fill" : "bell",
-                            text: "Remind",
-                            isActive: viewModel.isSubscribedToNotifications
-                        ) {
-                            LoggingService.debug("Bell icon tapped for video: \(video.id)", component: "Player")
-                            // This is the notification flow, not calendar
-                            viewModel.isSubscribedToNotifications.toggle()
-                            // Implementation of showing notification setup
-                            // or just open the VideoNotificationSetupView
-                            // (Left as is, user did not request removal of notifications)
-                        }
+                            text: viewModel.isSubscribedToNotifications ? "Subscribed" : "Subscribe",
+                            isActive: viewModel.isSubscribedToNotifications,
+                            action: {
+                                Task {
+                                    if viewModel.isSubscribedToNotifications {
+                                        await viewModel.removeNotification()
+                                    } else {
+                                        // Request notification permission and schedule if granted
+                                        let center = UNUserNotificationCenter.current()
+                                        let settings = await center.notificationSettings()
+                                        
+                                        if settings.authorizationStatus == .authorized {
+                                            // Create notification content
+                                            let content = UNMutableNotificationContent()
+                                            content.title = "New Content Available"
+                                            content.body = "Check out new content from \(viewModel.video.ownerUsername)"
+                                            content.sound = .default
+                                            
+                                            // Create trigger for 24 hours from now
+                                            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 24 * 60 * 60, repeats: false)
+                                            
+                                            // Create request with unique identifier
+                                            let requestId = UUID().uuidString
+                                            let request = UNNotificationRequest(identifier: requestId, content: content, trigger: trigger)
+                                            
+                                            do {
+                                                try await center.add(request)
+                                                viewModel.updateNotificationState(requestId: requestId)
+                                            } catch {
+                                                print("Error scheduling notification: \(error)")
+                                            }
+                                        } else {
+                                            // Request permission if not granted
+                                            do {
+                                                let granted = try await center.requestAuthorization(options: [.alert, .sound])
+                                                if granted {
+                                                    // Retry scheduling notification
+                                                    let content = UNMutableNotificationContent()
+                                                    content.title = "New Content Available"
+                                                    content.body = "Check out new content from \(viewModel.video.ownerUsername)"
+                                                    content.sound = .default
+                                                    
+                                                    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 24 * 60 * 60, repeats: false)
+                                                    let requestId = UUID().uuidString
+                                                    let request = UNNotificationRequest(identifier: requestId, content: content, trigger: trigger)
+                                                    
+                                                    try await center.add(request)
+                                                    viewModel.updateNotificationState(requestId: requestId)
+                                                }
+                                            } catch {
+                                                print("Error requesting notification permission: \(error)")
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            onLocationUpdate: { location in
+                                viewModel.brainAnimationPosition = location
+                            }
+                        )
                     }
                     .padding(.trailing, geometry.size.width * 0.05)
                     .padding(.bottom, geometry.size.height * 0.15)
@@ -265,25 +333,99 @@ private struct ControlButton: View {
     let text: String
     var isActive: Bool = false
     let action: () -> Void
+    let onLocationUpdate: (CGPoint) -> Void
+    @State private var location: CGPoint = .zero
+    @State private var isPressed = false
+    @State private var scale: CGFloat = 1.0
+    @Environment(\.colorScheme) private var colorScheme
+    private let hapticManager = UIImpactFeedbackGenerator(style: .medium)
     
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
+        Button {
+            hapticManager.impactOccurred(intensity: 0.8)
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.6, blendDuration: 0.2)) {
+                isPressed = true
+                scale = 0.8
+            }
+            
+            // Reset scale with a slight delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.6, blendDuration: 0.2)) {
+                    isPressed = false
+                    scale = 1.0
+                }
+            }
+            
+            onLocationUpdate(location)
+            action()
+        } label: {
+            VStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 34))
-                    .foregroundColor(isActive ? .blue : .white)
-                    .shadow(color: .black.opacity(0.6), radius: 5, x: 0, y: 2)
+                    .font(.system(size: 32))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(isActive ? .blue : .white, isActive ? .blue : .white)
+                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                    .symbolEffect(.bounce, value: isActive)
                 
                 Text(text)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.6), radius: 4, x: 0, y: 2)
+                    .font(.caption)
+                    .bold()
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
             }
         }
-        .buttonStyle(ScaleButtonStyle())
-        .frame(width: 44, height: 60)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(text) button")
-        .accessibilityHint("Double tap to \(text.lowercased())")
+        .scaleEffect(scale)
+        .buttonStyle(.plain)
+        .background(
+            GeometryReader { geometry in
+                Color.clear
+                    .preference(key: ButtonFramePreferenceKey.self, value: geometry.frame(in: .global))
+            }
+        )
+        .onPreferenceChange(ButtonFramePreferenceKey.self) { frame in
+            location = CGPoint(x: frame.midX, y: frame.midY)
+        }
+        .onAppear {
+            hapticManager.prepare()
+        }
+    }
+}
+
+struct ButtonFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
+#Preview {
+    let mockVideo = Video(
+        id: "mock-id",
+        ownerId: "mock-owner",
+        videoURL: "https://example.com/video.mp4",
+        thumbnailURL: "https://example.com/thumbnail.jpg",
+        title: "Mock Video",
+        tags: ["test", "mock"],
+        description: "This is a mock video for testing",
+        ownerUsername: "mockUser"
+    )
+    return VideoPlayerView(video: mockVideo)
+}
+
+// Add ToastView at the end of the file
+private struct ToastView: View {
+    let message: String
+    
+    var body: some View {
+        Text(message)
+            .font(.subheadline.bold())
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.black.opacity(0.8))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .shadow(color: .black.opacity(0.2), radius: 4)
+            .padding(.top, 50)
     }
 }

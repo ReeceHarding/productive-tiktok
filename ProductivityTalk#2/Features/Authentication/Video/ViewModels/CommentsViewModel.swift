@@ -270,20 +270,22 @@ class CommentsViewModel: ObservableObject {
                         return nil
                     }
                     
-                    // Increment view count
-                    Task {
-                        do {
-                            try await self.firestore
-                                .collection("videos")
-                                .document(self.video.id)
-                                .collection("comments")
-                                .document(comment.id)
-                                .updateData([
-                                    "viewCount": FieldValue.increment(Int64(1)) as Any
-                                ])
-                            LoggingService.debug("✅ Incremented viewCount for comment: \(comment.id)", component: "Comments")
-                        } catch {
-                            LoggingService.error("Failed to increment viewCount: \(error.localizedDescription)", component: "Comments")
+                    // Only increment view count for newly loaded comments
+                    if !self.comments.contains(where: { $0.id == comment.id }) {
+                        Task {
+                            do {
+                                try await self.firestore
+                                    .collection("videos")
+                                    .document(self.video.id)
+                                    .collection("comments")
+                                    .document(comment.id)
+                                    .updateData([
+                                        "viewCount": FieldValue.increment(Int64(1)) as Any
+                                    ])
+                                LoggingService.debug("✅ Incremented viewCount for new comment: \(comment.id)", component: "Comments")
+                            } catch {
+                                LoggingService.error("Failed to increment viewCount: \(error.localizedDescription)", component: "Comments")
+                            }
                         }
                     }
                     return comment
