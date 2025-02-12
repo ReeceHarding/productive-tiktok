@@ -110,12 +110,14 @@ Transcript:
         let lines = content.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         for line in lines {
             let lower = line.lowercased()
-            if lower.starts(with: "notificationmessage:") {
-                finalMessage = line
+            // Remove numeric prefix and clean up the line
+            let cleanedLine = line.replacingOccurrences(of: #"^\d+\)\s*"#, with: "", options: .regularExpression)
+            if cleanedLine.lowercased().starts(with: "notificationmessage:") {
+                finalMessage = cleanedLine
                     .replacingOccurrences(of: "notificationmessage:", with: "", options: .caseInsensitive)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-            } else if lower.starts(with: "proposedtime:") {
-                finalTimeStr = line
+            } else if cleanedLine.lowercased().starts(with: "proposedtime:") {
+                finalTimeStr = cleanedLine
                     .replacingOccurrences(of: "proposedtime:", with: "", options: .caseInsensitive)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }

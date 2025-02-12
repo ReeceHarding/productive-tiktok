@@ -6,6 +6,7 @@ import Combine
 import AVFoundation
 import SwiftUI
 import OSLog
+import UserNotifications
 
 // MARK: - Sendable Types
 private enum SendableValue: Sendable {
@@ -47,6 +48,7 @@ public class VideoPlayerViewModel: ObservableObject {
     @Published public var isPlaying = false
     @Published public var isBuffering = false
     @Published public var loadingProgress: Double = 0
+    @Published public var isSubscribedToNotifications = false
     
     private var observers: Set<NSKeyValueObservation> = []
     private var timeObserverToken: Any?
@@ -55,6 +57,7 @@ public class VideoPlayerViewModel: ObservableObject {
     private var preloadedPlayers: [String: AVPlayer] = [:]
     private var bufferingObserver: NSKeyValueObservation?
     private var loadingObserver: NSKeyValueObservation?
+    private var notificationRequestIds: Set<String> = []
     
     // Used to ensure we don't double fade
     private var fadeTask: Task<Void, Never>?
@@ -64,6 +67,9 @@ public class VideoPlayerViewModel: ObservableObject {
     private var isCleaningUp = false
     private var retryCount = 0
     private let maxRetries = 3
+    
+    private var subscriptionRequestId: String?
+    private var notificationManager = NotificationManager.shared
     
     public init(video: Video) {
         self.video = video
@@ -173,6 +179,10 @@ public class VideoPlayerViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 100_000_000) // Small delay to ensure cleanup completes
             await self.cleanup()
             LoggingService.debug("VideoPlayerViewModel deinit for video \(videoId)", component: "Player")
+        }
+        // Remove any pending notifications when the view model is deallocated
+        Task {
+            await self.removeNotification()
         }
     }
     
@@ -729,5 +739,24 @@ public class VideoPlayerViewModel: ObservableObject {
             "viewCount": video.viewCount + 1
         ]
         try await updateVideoStats(data: data)
+    }
+    
+    // MARK: - Notification Methods
+    public func updateNotificationState(requestId: String?) {
+        LoggingService.debug("Updating notification state for video \(video.id)", component: "Player")
+        if let requestId = requestId {
+            notificationRequestIds.insert(requestId)
+            isSubscribedToNotifications = true
+            LoggingService.debug("Added notification request ID: \(requestId)", component: "Player")
+        }
+    }
+    
+    public func removeNotification() async {
+        LoggingService.debug("Removing notifications for video \(video.id)", component: "Player")
+        // Remove all notification requests for this video
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: Array(notificationRequestIds))
+        notificationRequestIds.removeAll()
+        isSubscribedToNotifications = false
+        LoggingService.debug("Removed all notification requests", component: "Player")
     }
 } 

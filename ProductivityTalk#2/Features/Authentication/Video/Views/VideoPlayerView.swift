@@ -16,6 +16,7 @@ public struct VideoPlayerView: View {
     @State private var isVisible = false
     @State private var selectedVideo: Video?
     @State private var showingSchedulingView = false
+    @State private var showingNotificationSetup = false
     @State private var loadingProgress: Double = 0
     
     init(video: Video) {
@@ -63,7 +64,8 @@ public struct VideoPlayerView: View {
                     viewModel: viewModel,
                     showComments: $showComments,
                     selectedVideo: $selectedVideo,
-                    showingSchedulingView: $showingSchedulingView
+                    showingSchedulingView: $showingSchedulingView,
+                    showingNotificationSetup: $showingNotificationSetup
                 )
                 .transition(.opacity.combined(with: .scale))
             }
@@ -142,6 +144,16 @@ public struct VideoPlayerView: View {
                 SchedulingView(
                     transcript: transcript,
                     videoTitle: video.title
+                )
+                .presentationDragIndicator(.visible)
+                .presentationDetents([.medium, .large])
+            }
+        }
+        .sheet(isPresented: $showingNotificationSetup) {
+            if let transcript = video.transcript {
+                VideoNotificationSetupView(
+                    videoId: video.id,
+                    originalTranscript: transcript
                 )
                 .presentationDragIndicator(.visible)
                 .presentationDetents([.medium, .large])
@@ -228,6 +240,7 @@ private struct ControlsOverlay: View {
     @Binding var showComments: Bool
     @Binding var selectedVideo: Video?
     @Binding var showingSchedulingView: Bool
+    @Binding var showingNotificationSetup: Bool
     
     var body: some View {
         GeometryReader { geometry in
@@ -269,6 +282,16 @@ private struct ControlsOverlay: View {
                             LoggingService.debug("Calendar icon tapped for video: \(video.id)", component: "Player")
                             selectedVideo = video
                             showingSchedulingView = true
+                        }
+                        
+                        // Notification Bell Button
+                        ControlButton(
+                            icon: viewModel.isSubscribedToNotifications ? "bell.fill" : "bell",
+                            text: "Remind",
+                            isActive: viewModel.isSubscribedToNotifications
+                        ) {
+                            LoggingService.debug("Bell icon tapped for video: \(video.id)", component: "Player")
+                            showingNotificationSetup = true
                         }
                     }
                     .padding(.trailing, geometry.size.width * 0.05)
