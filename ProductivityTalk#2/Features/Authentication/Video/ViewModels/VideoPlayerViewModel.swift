@@ -72,6 +72,10 @@ public class VideoPlayerViewModel: ObservableObject {
     private var subscriptionRequestId: String?
     private var notificationManager = NotificationManager.shared
     
+    // Add at the top of the class with other properties
+    private var isCheckingStatus = false
+    private var lastCheckedVideoId: String?
+    
     public init(video: Video) {
         self.video = video
         self.brainCount = video.brainCount
@@ -116,12 +120,32 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     private func checkSecondBrainStatus() async throws {
+        guard !isCheckingStatus else {
+            LoggingService.debug("Status check already in progress for video \(video.id)", component: "Player")
+            return
+        }
+        
+        guard lastCheckedVideoId != video.id else {
+            LoggingService.debug("Status already checked for video \(video.id)", component: "Player")
+            return
+        }
+        
+        isCheckingStatus = true
+        defer { 
+            isCheckingStatus = false 
+            lastCheckedVideoId = video.id
+        }
+        
         guard let userId = Auth.auth().currentUser?.uid else { 
+            LoggingService.debug("No authenticated user, setting isInSecondBrain to false", component: "Player")
             await MainActor.run {
                 self.isInSecondBrain = false
+                self.brainCount = self.video.brainCount // Ensure we sync with video document
             }
             return 
         }
+        
+        LoggingService.debug("Starting Second Brain status check for video \(video.id) - Current brainCount: \(brainCount)", component: "Player")
         
         let snapshot = try await firestore.collection("users")
             .document(userId)
@@ -130,9 +154,29 @@ public class VideoPlayerViewModel: ObservableObject {
             .limit(to: 1)
             .getDocuments()
         
+        // Get the latest video document to ensure brain count is in sync
+        let videoDoc = try await firestore.collection("videos").document(video.id).getDocument()
+        let latestBrainCount = videoDoc.data()?["brainCount"] as? Int ?? self.video.brainCount
+        
+        // Update the video model with the latest brain count
+        self.video.brainCount = latestBrainCount
+        self.isInSecondBrain = isInSecondBrain
+        print("Second brain check complete - isInSecondBrain: \(isInSecondBrain), brainCount: \(latestBrainCount)")
+        
         await MainActor.run {
+            guard self.video.id == video.id else {
+                LoggingService.debug("Video ID changed during status check, skipping update", component: "Player")
+                return
+            }
+            
             let exists = !snapshot.documents.isEmpty
+            
+            LoggingService.debug("Second Brain check results - exists: \(exists), latestCount: \(latestBrainCount), currentCount: \(self.brainCount)", component: "Player")
+            
             self.isInSecondBrain = exists
+            self.brainCount = latestBrainCount
+            
+            LoggingService.debug("Updated Second Brain status - exists: \(exists), finalBrainCount: \(self.brainCount)", component: "Player")
         }
     }
     
@@ -192,18 +236,21 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     public func loadVideo() async {
+        LoggingService.debug("Starting video load for \(video.id)", component: "Player")
         isLoading = true
         loadingProgress = 0
         error = nil
         
         // Check if we have a preloaded player first
         if let preloadedPlayer = preloadedPlayers[video.id] {
+            LoggingService.debug("Using preloaded player for \(video.id)", component: "Player")
             do {
                 try await setupPlayer(preloadedPlayer)
                 preloadedPlayers.removeValue(forKey: video.id)
             } catch {
                 self.error = "Failed to setup preloaded player: \(error.localizedDescription)"
                 isLoading = false
+                LoggingService.error("Failed to setup preloaded player for \(video.id): \(error)", component: "Player")
             }
             return
         }
@@ -211,8 +258,11 @@ public class VideoPlayerViewModel: ObservableObject {
         guard let url = URL(string: video.videoURL) else {
             error = "Invalid video URL"
             isLoading = false
+            LoggingService.error("Invalid video URL for \(video.id): \(video.videoURL)", component: "Player")
             return
         }
+        
+        LoggingService.debug("Creating asset for \(video.id) with URL: \(url)", component: "Player")
         
         // Create asset with optimized loading options
         let asset = AVURLAsset(url: url, options: [
@@ -225,6 +275,7 @@ public class VideoPlayerViewModel: ObservableObject {
         } catch {
             self.error = "Failed to load video: \(error.localizedDescription)"
             isLoading = false
+            LoggingService.error("Failed to setup new player for \(video.id): \(error)", component: "Player")
         }
     }
     
@@ -348,12 +399,15 @@ public class VideoPlayerViewModel: ObservableObject {
                 case .readyToPlay:
                     LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                     // Start buffering only when player is ready
-                    if let success = try? await player.preroll(atRate: 1.0) {
+                    do {
+                        let success = try await player.preroll(atRate: 1.0)
                         if success {
                             LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
                         } else {
                             LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
                         }
+                    } catch {
+                        LoggingService.error("Preroll error for \(self.video.id): \(error)", component: "Player")
                     }
                 default:
                     break
@@ -408,6 +462,9 @@ public class VideoPlayerViewModel: ObservableObject {
         }
         
         let wasInSecondBrain = isInSecondBrain
+        let previousBrainCount = brainCount
+        
+        LoggingService.debug("Starting Second Brain toggle for video \(video.id) - Current state: inBrain=\(wasInSecondBrain), count=\(previousBrainCount)", component: "Player")
         
         do {
             // Get reference to the user's second brain collection
@@ -419,16 +476,17 @@ public class VideoPlayerViewModel: ObservableObject {
             // Get reference to the video document
             let videoRef = firestore.collection("videos").document(video.id)
             
-            let transactionResult = try await firestore.runTransaction { (transaction, errorPointer) -> Any? in
+            let transactionResult = try await firestore.runTransaction { transaction, errorPointer -> Bool in
                 let secondBrainDoc: DocumentSnapshot
                 let videoDoc: DocumentSnapshot
                 
                 do {
                     secondBrainDoc = try transaction.getDocument(secondBrainRef)
                     videoDoc = try transaction.getDocument(videoRef)
+                    LoggingService.debug("Successfully fetched documents in transaction", component: "Player")
                 } catch let fetchError as NSError {
                     errorPointer?.pointee = fetchError
-                    return nil
+                    return false
                 }
                 
                 // Update watch time
@@ -445,60 +503,54 @@ public class VideoPlayerViewModel: ObservableObject {
                     ], forDocument: videoRef)
                     
                     LoggingService.success("Removed video \(self.video.id) from second brain", component: "Player")
-                    return true as Any
-                } else {
-                    // Extract fields from video document
-                    let videoData = videoDoc.data() ?? [:]
-                    let quotes = videoData["quotes"] as? [String] ?? []
-                    let transcript = videoData["transcript"] as? String ?? ""
-                    let category = (videoData["tags"] as? [String])?.first ?? "Uncategorized"
-                    let title = videoData["title"] as? String ?? "No title"
-                    let thumbURL = videoData["thumbnailURL"] as? String ?? ""
-                    
-                    // Add to second brain with all required fields
-                    let secondBrainData: [String: Any] = [
-                        "videoId": self.video.id,
-                        "userId": userId,
-                        "quotes": quotes,
-                        "transcript": transcript,
-                        "category": category,
-                        "videoTitle": title,
-                        "videoThumbnailURL": thumbURL,
-                        "savedAt": FieldValue.serverTimestamp()
-                    ]
-                    
-                    LoggingService.debug("Adding video to second brain with data: \(secondBrainData)", component: "Player")
-                    transaction.setData(secondBrainData, forDocument: secondBrainRef)
-                    
-                    transaction.updateData([
-                        "brainCount": FieldValue.increment(Int64(1)),
-                        "updatedAt": FieldValue.serverTimestamp()
-                    ], forDocument: videoRef)
-                    
-                    LoggingService.success("Added video \(self.video.id) to second brain with \(quotes.count) quotes", component: "Player")
-                    return false as Any
-                }
+                    return false
+                } 
+                
+                // Extract fields from video document
+                let videoData = videoDoc.data() ?? [:]
+                let quotes = videoData["quotes"] as? [String] ?? []
+                let transcript = videoData["transcript"] as? String ?? ""
+                let category = (videoData["tags"] as? [String])?.first ?? "Uncategorized"
+                let title = videoData["title"] as? String ?? "No title"
+                let thumbURL = videoData["thumbnailURL"] as? String ?? ""
+                
+                // Add to second brain with all required fields
+                let secondBrainData: [String: Any] = [
+                    "videoId": self.video.id,
+                    "userId": userId,
+                    "quotes": quotes,
+                    "transcript": transcript,
+                    "category": category,
+                    "videoTitle": title,
+                    "videoThumbnailURL": thumbURL,
+                    "savedAt": FieldValue.serverTimestamp()
+                ]
+                
+                LoggingService.debug("Adding video to second brain with data: \(secondBrainData)", component: "Player")
+                transaction.setData(secondBrainData, forDocument: secondBrainRef)
+                
+                transaction.updateData([
+                    "brainCount": FieldValue.increment(Int64(1)),
+                    "updatedAt": FieldValue.serverTimestamp()
+                ], forDocument: videoRef)
+                
+                LoggingService.success("Added video \(self.video.id) to second brain with \(quotes.count) quotes", component: "Player")
+                return true
             }
             
             // Update UI state after transaction completes
             await MainActor.run {
-                if let wasRemoved = transactionResult as? Bool {
-                    if wasRemoved {
-                        self.isInSecondBrain = false
-                        self.brainCount -= 1
-                        self.showBrainAnimation = false
-                        LoggingService.debug("UI updated after removing from second brain", component: "Player")
-                    } else {
-                        self.isInSecondBrain = true
-                        self.brainCount += 1
-                        self.showBrainAnimation = true
-                        LoggingService.debug("UI updated after adding to second brain", component: "Player")
-                    }
-                }
+                let wasAdded = (transactionResult as? Bool) ?? false
+                self.isInSecondBrain = wasAdded
+                self.brainCount = wasAdded ? previousBrainCount + 1 : previousBrainCount - 1
+                self.showBrainAnimation = wasAdded
+                LoggingService.debug("UI updated after second brain toggle - inBrain=\(self.isInSecondBrain), newCount=\(self.brainCount)", component: "Player")
             }
         } catch {
+            // Revert UI state on error
             await MainActor.run {
                 self.isInSecondBrain = wasInSecondBrain
+                self.brainCount = previousBrainCount
             }
             LoggingService.error("Failed to toggle second brain for video \(video.id): \(error.localizedDescription)", component: "Player")
             throw error
@@ -527,13 +579,20 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     // MARK: - Enhanced Play Method
-    public func play() async {
+    public func play() async throws {
+        LoggingService.debug("Play requested for video \(video.id)", component: "Player")
+        
         // Initialize player if needed
         if player == nil || player?.currentItem == nil {
+            LoggingService.debug("No player available for \(video.id), loading video", component: "Player")
             await loadVideo()
         }
         
-        guard let player = player else { return }
+        guard let player = player else {
+            let error = NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Player not available"])
+            LoggingService.error("Failed to get player for \(video.id): \(error)", component: "Player")
+            throw error
+        }
         
         // Ensure volume is set to 1.0 initially
         player.volume = 1.0
@@ -542,6 +601,7 @@ public class VideoPlayerViewModel: ObservableObject {
         player.play()
         isPlaying = true
         VideoPlayerViewModel.currentlyPlayingViewModel = self
+        LoggingService.debug("Started playback for \(video.id)", component: "Player")
         
         // Cancel any existing fade tasks
         cancelFades()
@@ -549,15 +609,19 @@ public class VideoPlayerViewModel: ObservableObject {
         // Fade in audio
         do {
             try await fadeInAudio()
+            LoggingService.debug("Completed audio fade in for \(video.id)", component: "Player")
         } catch {
-            LoggingService.error("Error during audio fade: \(error)", component: "Player")
+            LoggingService.error("Error during audio fade for \(video.id): \(error)", component: "Player")
+            throw error
         }
         
         // Increment view count
         do {
             try await incrementViewCount()
+            LoggingService.debug("Incremented view count for \(video.id)", component: "Player")
         } catch {
-            LoggingService.error("Failed to increment view count: \(error)", component: "PlayerVM")
+            LoggingService.error("Failed to increment view count for \(video.id): \(error)", component: "PlayerVM")
+            // Don't throw here as view count failure shouldn't stop playback
         }
     }
     
@@ -569,14 +633,19 @@ public class VideoPlayerViewModel: ObservableObject {
         showControls.toggle()
     }
     
-    public func preloadVideo(_ video: Video) async {
+    public func preloadVideo(_ video: Video) async throws {
+        LoggingService.debug("Starting preload for video \(video.id)", component: "Player")
+        
         // Don't preload if we already have this video preloaded
         if preloadedPlayers[video.id] != nil {
+            LoggingService.debug("Video \(video.id) already preloaded", component: "Player")
             return
         }
         
         guard let url = URL(string: video.videoURL) else {
-            return
+            let error = NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid video URL"])
+            LoggingService.error("Invalid URL for video \(video.id): \(video.videoURL)", component: "Player")
+            throw error
         }
         
         // Create asset with optimized loading options
@@ -589,7 +658,9 @@ public class VideoPlayerViewModel: ObservableObject {
             let playable = try await asset.load(.isPlayable)
             
             guard playable else {
-                return
+                let error = NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Video not playable"])
+                LoggingService.error("Video \(video.id) not playable", component: "Player")
+                throw error
             }
             
             let playerItem = AVPlayerItem(asset: asset)
@@ -612,16 +683,18 @@ public class VideoPlayerViewModel: ObservableObject {
             }
             
             // Now that player is ready, attempt preroll
-            do {
-                let success = try await player.preroll(atRate: 1.0)
-                if success {
-                    preloadedPlayers[video.id] = player
-                }
-            } catch {
-                // Silently handle preroll errors for preloading
+            let success = try await player.preroll(atRate: 1.0)
+            if success {
+                preloadedPlayers[video.id] = player
+                LoggingService.success("Successfully preloaded video \(video.id)", component: "Player")
+            } else {
+                let error = NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Preroll failed"])
+                LoggingService.error("Preroll failed for video \(video.id)", component: "Player")
+                throw error
             }
         } catch {
-            // Silently handle preload errors
+            LoggingService.error("Failed to preload video \(video.id): \(error)", component: "Player")
+            throw error
         }
     }
     
@@ -694,6 +767,9 @@ public class VideoPlayerViewModel: ObservableObject {
         let sendableData = data.mapValues { value -> Any in
             if let value = value as? Date {
                 return Timestamp(date: value)
+            }
+            if let value = value as? String? {
+                return value ?? ""  // Provide a default empty string for nil values
             }
             return value
         }

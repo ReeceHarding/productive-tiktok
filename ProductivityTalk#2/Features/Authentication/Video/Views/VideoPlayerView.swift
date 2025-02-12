@@ -23,35 +23,121 @@ public struct VideoPlayerView: View {
     }
     
     public var body: some View {
+        VideoPlayerContainer(
+            video: video,
+            viewModel: viewModel,
+            isVisible: $isVisible,
+            loadingProgress: $loadingProgress,
+            showComments: $showComments,
+            showError: $showError,
+            errorMessage: $errorMessage
+        )
+    }
+}
+
+private struct VideoPlayerContainer: View {
+    let video: Video
+    @ObservedObject var viewModel: VideoPlayerViewModel
+    @Binding var isVisible: Bool
+    @Binding var loadingProgress: Double
+    @Binding var showComments: Bool
+    @Binding var showError: Bool
+    @Binding var errorMessage: String?
+    @Environment(\.scenePhase) private var scenePhase
+    
+    var body: some View {
         ZStack {
             // Video Player
-            if let player = viewModel.player {
-                VideoPlayer(player: player)
-                    .containerRelativeFrame([.horizontal, .vertical])
-                    .aspectRatio(contentMode: .fill)
-                    .clipped()
-                    .ignoresSafeArea()
-                    .accessibilityLabel("Video player for \(video.title)")
-                    .accessibilityAddTraits(.startsMediaSession)
-                    .overlay(
-                        // Replace buffering spinner with our custom LoadingAnimation
-                        Group {
-                            if viewModel.isBuffering {
-                                ZStack {
-                                    Color.black.opacity(0.3)
-                                        .ignoresSafeArea()
-                                    LoadingAnimation(message: "Buffering...")
-                                        .foregroundColor(.white)
-                                        .scaleEffect(1.2)
-                                }
-                            }
-                        }
-                    )
-            } else {
-                VideoLoadingView(progress: $loadingProgress)
-                    .containerRelativeFrame([.horizontal, .vertical])
-            }
+            VideoPlayerContent(
+                video: video,
+                viewModel: viewModel,
+                loadingProgress: $loadingProgress
+            )
             
+            // Overlays
+            VideoPlayerOverlays(
+                video: video,
+                viewModel: viewModel,
+                showComments: $showComments
+            )
+        }
+        .background(Color.black)
+        .task {
+            if !viewModel.isLoading && viewModel.player == nil {
+                LoggingService.debug("Initial task - Loading video for \(video.id)", component: "Player")
+                do {
+                    await viewModel.loadVideo()
+                } catch {
+                    LoggingService.error("Failed to load video: \(error)", component: "Player")
+                }
+            }
+        }
+        .onAppear {
+            LoggingService.video("Video view appeared for \(video.id)", component: "Player")
+            isVisible = true
+            LoggingService.debug("Set isVisible to true for \(video.id)", component: "Player")
+        }
+        .task(id: isVisible) {
+            if isVisible && !viewModel.isLoading {
+                LoggingService.debug("isVisible task - Playing video \(video.id) (isLoading: \(viewModel.isLoading))", component: "Player")
+                do {
+                    try await viewModel.play()
+                } catch {
+                    LoggingService.error("Failed to play video: \(error)", component: "Player")
+                }
+            }
+        }
+        .onDisappear {
+            LoggingService.video("Video view disappeared for \(video.id)", component: "Player")
+            isVisible = false
+            LoggingService.debug("Set isVisible to false for \(video.id)", component: "Player")
+            Task {
+                await viewModel.pausePlayback()
+            }
+        }
+        .onChange(of: viewModel.loadingProgress) { _, newProgress in
+            loadingProgress = newProgress
+            LoggingService.debug("Loading progress updated to \(newProgress) for \(video.id)", component: "Player")
+        }
+        .onChange(of: viewModel.isLoading) { _, isLoading in
+            if !isLoading && isVisible {
+                LoggingService.debug("isLoading changed - Playing video \(video.id) (isVisible: \(isVisible))", component: "Player")
+                Task {
+                    do {
+                        try await viewModel.play()
+                    } catch {
+                        LoggingService.error("Failed to play video: \(error)", component: "Player")
+                    }
+                }
+            }
+        }
+        .gesture(
+            VideoPlayerGestures(
+                viewModel: viewModel,
+                showError: $showError,
+                errorMessage: $errorMessage
+            )
+        )
+        .sheet(isPresented: $showComments) {
+            CommentsView(viewModel: CommentsViewModel(video: video))
+                .presentationDragIndicator(.visible)
+                .presentationDetents([.medium, .large])
+        }
+        .alert("Error", isPresented: $showError, presenting: errorMessage) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { message in
+            Text(message)
+        }
+    }
+}
+
+private struct VideoPlayerOverlays: View {
+    let video: Video
+    @ObservedObject var viewModel: VideoPlayerViewModel
+    @Binding var showComments: Bool
+    
+    var body: some View {
+        ZStack {
             // Error Overlay
             if let error = viewModel.error {
                 ErrorOverlay(error: error) {
@@ -77,72 +163,76 @@ public struct VideoPlayerView: View {
                     .accessibilityHidden(true)
             }
         }
-        .background(Color.black)
-        .task {
-            if !viewModel.isLoading && viewModel.player == nil {
-                await viewModel.loadVideo()
-            }
-        }
-        .onAppear {
-            LoggingService.video("Video view appeared for \(video.id)", component: "Player")
-            isVisible = true
-        }
-        .task(id: isVisible) {
-            if isVisible && !viewModel.isLoading {
-                await viewModel.play()
-            }
-        }
-        .onDisappear {
-            LoggingService.video("Video view disappeared for \(video.id)", component: "Player")
-            isVisible = false
-            Task {
-                await viewModel.pause()
-            }
-        }
-        .onChange(of: viewModel.loadingProgress) { _, newProgress in
-            loadingProgress = newProgress
-        }
-        .onChange(of: viewModel.isLoading) { _, isLoading in
-            if !isLoading && isVisible {
-                LoggingService.video("Video loaded for \(video.id)", component: "Player")
-                Task {
-                    await viewModel.play()
-                }
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 1) {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                viewModel.toggleControls()
-            }
-        }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onEnded { value in
-                    let location = value.location
-                    viewModel.brainAnimationPosition = location
-                }
+    }
+}
+
+private struct VideoPlayerGestures: Gesture {
+    @ObservedObject var viewModel: VideoPlayerViewModel
+    @Binding var showError: Bool
+    @Binding var errorMessage: String?
+    
+    var body: some Gesture {
+        SimultaneousGesture(
+            TapGesture(count: 1)
+                .onEnded {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        viewModel.toggleControls()
+                    }
+                },
+            SimultaneousGesture(
+                TapGesture(count: 2)
+                    .onEnded {
+                        Task {
+                            do {
+                                try await viewModel.addToSecondBrain()
+                            } catch {
+                                LoggingService.error("Failed to add to second brain: \(error)", component: "Player")
+                                errorMessage = "Failed to save to Second Brain"
+                                showError = true
+                            }
+                        }
+                    },
+                DragGesture(minimumDistance: 0)
+                    .onEnded { value in
+                        viewModel.brainAnimationPosition = value.location
+                    }
+            )
         )
-        .onTapGesture(count: 2) {
-            Task {
-                do {
-                    try await viewModel.addToSecondBrain()
-                } catch {
-                    LoggingService.error("Failed to add to second brain: \(error)", component: "Player")
-                    errorMessage = "Failed to save to Second Brain"
-                    showError = true
-                }
+    }
+}
+
+private struct VideoPlayerContent: View {
+    let video: Video
+    @ObservedObject var viewModel: VideoPlayerViewModel
+    @Binding var loadingProgress: Double
+    
+    var body: some View {
+        Group {
+            if let player = viewModel.player {
+                VideoPlayer(player: player)
+                    .containerRelativeFrame([.horizontal, .vertical])
+                    .aspectRatio(contentMode: .fill)
+                    .clipped()
+                    .ignoresSafeArea()
+                    .accessibilityLabel("Video player for \(video.title)")
+                    .accessibilityAddTraits(.startsMediaSession)
+                    .overlay(
+                        Group {
+                            if viewModel.isBuffering {
+                                ZStack {
+                                    Color.black.opacity(0.3)
+                                        .ignoresSafeArea()
+                                    LoadingAnimation(message: "Buffering...")
+                                        .foregroundColor(.white)
+                                        .scaleEffect(1.2)
+                                }
+                            }
+                        }
+                    )
+            } else {
+                VideoLoadingView(progress: $loadingProgress)
+                    .containerRelativeFrame([.horizontal, .vertical])
             }
-        }
-        .sheet(isPresented: $showComments) {
-            CommentsView(video: video)
-                .presentationDragIndicator(.visible)
-                .presentationDetents([.medium, .large])
-        }
-        .alert("Error", isPresented: $showError, presenting: errorMessage) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { message in
-            Text(message)
         }
     }
 }

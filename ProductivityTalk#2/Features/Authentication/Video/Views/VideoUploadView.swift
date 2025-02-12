@@ -489,7 +489,7 @@ extension VideoUploadView {
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
             .sheet(isPresented: $showComments) {
-                CommentsView(video: video)
+                CommentsView(viewModel: CommentsViewModel(video: video))
             }
         }
         

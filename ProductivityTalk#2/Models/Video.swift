@@ -37,6 +37,32 @@ public struct Video: Identifiable, Codable {
     public var ownerUsername: String
     public var ownerProfilePicURL: String?
     
+    // MARK: - Mock Data for Previews
+    public static let mock = Video(
+        id: "mock_video",
+        ownerId: "mock_user",
+        videoURL: "https://example.com/mock_video.mp4",
+        thumbnailURL: "https://example.com/mock_thumbnail.jpg",
+        title: "Mock Video",
+        tags: ["productivity", "tech"],
+        description: "This is a mock video for SwiftUI previews",
+        createdAt: Date(),
+        likeCount: 100,
+        saveCount: 50,
+        commentCount: 25,
+        brainCount: 10,
+        viewCount: 1000,
+        processingStatus: .ready,
+        transcript: "This is a mock transcript",
+        extractedQuotes: ["Mock quote 1", "Mock quote 2"],
+        quotes: ["Mock quote 1", "Mock quote 2"],
+        autoTitle: "Auto Mock Title",
+        autoDescription: "Auto mock description",
+        autoTags: ["auto", "mock", "tags"],
+        ownerUsername: "MockUser",
+        ownerProfilePicURL: "https://example.com/mock_profile.jpg"
+    )
+    
     enum CodingKeys: String, CodingKey {
         case id
         case ownerId
@@ -64,7 +90,8 @@ public struct Video: Identifiable, Codable {
     
     // Initialize from Firestore document
     init?(document: DocumentSnapshot) {
-        guard let data = document.data() else {
+        let data = document.data()
+        guard let data = data else {
             LoggingService.error("Failed to initialize - No data in document", component: "Video")
             return nil
         }
@@ -73,17 +100,51 @@ public struct Video: Identifiable, Codable {
         LoggingService.debug("📄 Document data: \(data)", component: "Video")
         
         self.id = document.documentID
-        guard let ownerId = data["ownerId"] as? String,
-              let videoURL = data["videoURL"] as? String,
-              let thumbnailURL = data["thumbnailURL"] as? String,
-              let title = data["title"] as? String,
-              let tags = data["tags"] as? [String],
-              let description = data["description"] as? String,
-              let createdAt = (data["createdAt"] as? Timestamp)?.dateValue(),
-              let ownerUsername = data["ownerUsername"] as? String,
-              let processingStatusRaw = data["processingStatus"] as? String,
+        
+        // Check each required field individually for better error reporting
+        guard let ownerId = data["ownerId"] as? String else {
+            LoggingService.error("Missing required field 'ownerId' in document \(document.documentID)", component: "Video")
+            return nil
+        }
+        
+        guard let videoURL = data["videoURL"] as? String else {
+            LoggingService.error("Missing required field 'videoURL' in document \(document.documentID)", component: "Video")
+            return nil
+        }
+        
+        guard let thumbnailURL = data["thumbnailURL"] as? String else {
+            LoggingService.error("Missing required field 'thumbnailURL' in document \(document.documentID)", component: "Video")
+            return nil
+        }
+        
+        guard let title = data["title"] as? String else {
+            LoggingService.error("Missing required field 'title' in document \(document.documentID)", component: "Video")
+            return nil
+        }
+        
+        guard let tags = data["tags"] as? [String] else {
+            LoggingService.error("Missing required field 'tags' in document \(document.documentID)", component: "Video")
+            return nil
+        }
+        
+        guard let description = data["description"] as? String else {
+            LoggingService.error("Missing required field 'description' in document \(document.documentID)", component: "Video")
+            return nil
+        }
+        
+        guard let createdAt = (data["createdAt"] as? Timestamp)?.dateValue() else {
+            LoggingService.error("Missing or invalid field 'createdAt' in document \(document.documentID)", component: "Video")
+            return nil
+        }
+        
+        guard let ownerUsername = data["ownerUsername"] as? String else {
+            LoggingService.error("Missing required field 'ownerUsername' in document \(document.documentID)", component: "Video")
+            return nil
+        }
+        
+        guard let processingStatusRaw = data["processingStatus"] as? String,
               let processingStatus = VideoProcessingStatus(rawValue: processingStatusRaw) else {
-            LoggingService.error("Failed to initialize - Missing required fields", component: "Video")
+            LoggingService.error("Missing or invalid field 'processingStatus' in document \(document.documentID)", component: "Video")
             return nil
         }
         
@@ -122,13 +183,17 @@ public struct Video: Identifiable, Codable {
         self.autoDescription = data["autoDescription"] as? String
         self.autoTags = data["autoTags"] as? [String]
         
-        LoggingService.success("Successfully initialized video with ID: \(id)", component: "Video")
+        LoggingService.success("Successfully initialized video \(document.documentID)", component: "Video")
+        LoggingService.debug("Video details - Status: \(processingStatus.rawValue), URL: \(videoURL)", component: "Video")
     }
     
     // Initialize directly
     init(id: String, ownerId: String, videoURL: String, thumbnailURL: String, 
-         title: String, tags: [String], description: String, ownerUsername: String,
-         ownerProfilePicURL: String? = nil) {
+         title: String, tags: [String], description: String, createdAt: Date,
+         likeCount: Int, saveCount: Int, commentCount: Int, brainCount: Int, viewCount: Int,
+         processingStatus: VideoProcessingStatus, transcript: String?, extractedQuotes: [String]?,
+         quotes: [String]?, autoTitle: String?, autoDescription: String?, autoTags: [String]?,
+         ownerUsername: String, ownerProfilePicURL: String? = nil) {
         
         self.id = id
         self.ownerId = ownerId
@@ -137,21 +202,21 @@ public struct Video: Identifiable, Codable {
         self.title = title
         self.tags = tags
         self.description = description
-        self.createdAt = Date()
-        self.likeCount = 0
-        self.saveCount = 0
-        self.commentCount = 0
-        self.brainCount = 0
-        self.viewCount = 0
+        self.createdAt = createdAt
+        self.likeCount = likeCount
+        self.saveCount = saveCount
+        self.commentCount = commentCount
+        self.brainCount = brainCount
+        self.viewCount = viewCount
+        self.processingStatus = processingStatus
+        self.transcript = transcript
+        self.extractedQuotes = extractedQuotes
+        self.quotes = quotes
+        self.autoTitle = autoTitle
+        self.autoDescription = autoDescription
+        self.autoTags = autoTags
         self.ownerUsername = ownerUsername
         self.ownerProfilePicURL = ownerProfilePicURL
-        self.processingStatus = .uploading
-        self.transcript = nil
-        self.extractedQuotes = nil
-        self.quotes = nil
-        self.autoTitle = nil
-        self.autoDescription = nil
-        self.autoTags = nil
         
         LoggingService.success("Created new video with ID: \(id)", component: "Video")
     }

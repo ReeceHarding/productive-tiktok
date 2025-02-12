@@ -38,7 +38,7 @@ public class VideoFeedViewModel: ObservableObject {
         }
     }
     
-    func fetchVideos() async {
+    public func fetchVideos() async {
         guard !isFetching else {
             LoggingService.error("Already fetching videos", component: "Feed")
             return
@@ -60,18 +60,29 @@ public class VideoFeedViewModel: ObservableObject {
             
             for document in snapshot.documents {
                 LoggingService.debug("Processing document with ID: \(document.documentID)", component: "Feed")
-                if let video = Video(document: document),
-                   video.processingStatus == .ready,
-                   !video.videoURL.isEmpty {
-                    LoggingService.debug("Adding ready video: \(video.id)", component: "Feed")
-                    fetchedVideos.append(video)
-                    subscribeToUpdates(for: video)
-                    // Create player view model if not already created
-                    if playerViewModels[video.id] == nil {
-                        playerViewModels[video.id] = VideoPlayerViewModel(video: video)
+                
+                if let video = Video(document: document) {
+                    LoggingService.debug("Successfully parsed video. Status: \(video.processingStatus.rawValue), URL: \(video.videoURL)", component: "Feed")
+                    
+                    if video.processingStatus == .ready {
+                        if !video.videoURL.isEmpty {
+                            LoggingService.debug("Adding ready video: \(video.id)", component: "Feed")
+                            fetchedVideos.append(video)
+                            subscribeToUpdates(for: video)
+                            // Create player view model if not already created
+                            if playerViewModels[video.id] == nil {
+                                playerViewModels[video.id] = VideoPlayerViewModel(video: video)
+                            }
+                        } else {
+                            LoggingService.error("Skipping video \(document.documentID) - Empty video URL", component: "Feed")
+                        }
+                    } else {
+                        LoggingService.debug("Skipping video \(document.documentID) - Status not ready: \(video.processingStatus.rawValue)", component: "Feed")
                     }
                 } else {
-                    LoggingService.debug("Skipping video \(document.documentID) - Not ready or no URL", component: "Feed")
+                    LoggingService.error("Failed to parse video document \(document.documentID)", component: "Feed")
+                    let documentData = document.data()
+                    LoggingService.debug("Document data: \(documentData)", component: "Feed")
                 }
             }
             
@@ -123,6 +134,8 @@ public class VideoFeedViewModel: ObservableObject {
                     }
                 } else {
                     LoggingService.debug("Skipping video \(document.documentID) - Not ready or no URL", component: "Feed")
+                    let documentData = document.data()
+                    LoggingService.debug("Document data: \(documentData)", component: "Feed")
                 }
             }
             
@@ -157,9 +170,18 @@ public class VideoFeedViewModel: ObservableObject {
                 return
             }
             
-            guard let snapshot = snapshot, snapshot.exists,
-                  let updatedVideo = Video(document: snapshot) else {
-                LoggingService.error("No valid snapshot for video \(video.id)", component: "Feed")
+            guard let snapshot = snapshot else {
+                LoggingService.error("No snapshot received for video \(video.id)", component: "Feed")
+                return
+            }
+            
+            guard snapshot.exists else {
+                LoggingService.error("Document does not exist for video \(video.id)", component: "Feed")
+                return
+            }
+            
+            guard let updatedVideo = Video(document: snapshot) else {
+                LoggingService.error("Could not parse video document for \(video.id)", component: "Feed")
                 return
             }
             
@@ -191,23 +213,31 @@ public class VideoFeedViewModel: ObservableObject {
         }
         
         let video = videos[index]
+        LoggingService.debug("Starting preload for video \(video.id) at index \(index)", component: "Feed")
         
         // Cancel any existing preload task for this video
         preloadTasks[video.id]?.cancel()
         
         // Create a new background task for preloading
         let preloadTask = Task.detached(priority: .background) { [weak self] in
-            guard let self = self else { return }
-            
-            // Get the player view model for this video
-            guard let playerViewModel = await MainActor.run(body: { self.playerViewModels[video.id] }) else {
+            guard let self = self else {
+                LoggingService.error("Self reference lost during preload of video \(video.id)", component: "Feed")
                 return
             }
             
-            // Preload the video in the background
-            await playerViewModel.preloadVideo(video)
+            // Get the player view model for this video
+            guard let playerViewModel = await MainActor.run(body: { self.playerViewModels[video.id] }) else {
+                LoggingService.error("No player view model found for video \(video.id)", component: "Feed")
+                return
+            }
             
-            LoggingService.success("Successfully preloaded video at index \(index)", component: "Feed")
+            do {
+                // Preload the video in the background
+                try await playerViewModel.preloadVideo(video)
+                LoggingService.success("Successfully preloaded video \(video.id) at index \(index)", component: "Feed")
+            } catch {
+                LoggingService.error("Failed to preload video \(video.id): \(error)", component: "Feed")
+            }
         }
         
         preloadTasks[video.id] = preloadTask
@@ -220,6 +250,7 @@ public class VideoFeedViewModel: ObservableObject {
         for offset in 1...preloadWindow {
             let nextIndex = currentIndex + offset
             if nextIndex < videos.count {
+                LoggingService.debug("Preloading next video at index \(nextIndex)", component: "Feed")
                 await preloadVideo(at: nextIndex)
             }
         }
@@ -228,6 +259,7 @@ public class VideoFeedViewModel: ObservableObject {
         for offset in 1...preloadWindow {
             let prevIndex = currentIndex - offset
             if prevIndex >= 0 {
+                LoggingService.debug("Preloading previous video at index \(prevIndex)", component: "Feed")
                 await preloadVideo(at: prevIndex)
             }
         }

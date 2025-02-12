@@ -42,7 +42,11 @@ struct VideoFeedView: View {
         case .active:
             if let videoId = scrollPosition {
                 Task {
-                    await viewModel.playerViewModels[videoId]?.play()
+                    do {
+                        try await viewModel.playerViewModels[videoId]?.play()
+                    } catch {
+                        LoggingService.error("Failed to play video on scene active: \(error)", component: "Feed")
+                    }
                 }
             }
         case .inactive, .background:

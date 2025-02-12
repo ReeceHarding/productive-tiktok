@@ -136,7 +136,21 @@ final class VideoUploadViewModel: ObservableObject {
                     title: "Processing...",
                     tags: [],
                     description: "Processing...",
-                    ownerUsername: username
+                    createdAt: Date(),
+                    likeCount: 0,
+                    saveCount: 0,
+                    commentCount: 0,
+                    brainCount: 0,
+                    viewCount: 0,
+                    processingStatus: .uploading,
+                    transcript: nil,
+                    extractedQuotes: nil,
+                    quotes: nil,
+                    autoTitle: nil,
+                    autoDescription: nil,
+                    autoTags: nil,
+                    ownerUsername: username,
+                    ownerProfilePicURL: nil
                 )
                 
                 // Firestore batch
