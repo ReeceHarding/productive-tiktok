@@ -71,6 +71,7 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private var subscriptionRequestId: String?
     private var notificationManager = NotificationManager.shared
+    private var subscriptions = Set<AnyCancellable>()
     
     public init(video: Video) {
         self.video = video
@@ -174,20 +175,21 @@ public class VideoPlayerViewModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             let videoId = self.video.id
-            if let handler = self.deinitHandler {
+            if let handler = deinitHandler {
                 await handler()
             }
             try? await Task.sleep(nanoseconds: 100_000_000) // Small delay to ensure cleanup completes
             do {
-                await self.cleanup()
+                await cleanup()
                 LoggingService.debug("VideoPlayerViewModel deinit for video \(videoId)", component: "Player")
             } catch {
                 LoggingService.error("Error during cleanup in deinit for video \(videoId): \(error)", component: "Player")
             }
         }
         // Remove any pending notifications when the view model is deallocated
-        Task {
-            await self.removeNotification()
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            await removeNotification()
         }
     }
     
@@ -755,5 +757,24 @@ public class VideoPlayerViewModel: ObservableObject {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: Array(notificationRequestIds))
         notificationRequestIds.removeAll()
         isSubscribedToNotifications = false
+    }
+    
+    /// Cleans up resources when under memory pressure
+    public func cleanupForMemory() async {
+        // Call existing cleanup
+        await cleanup()
+        
+        // Clear any preloaded players
+        preloadedPlayers.removeAll()
+        
+        // Cancel any pending tasks
+        fadeTask?.cancel()
+        fadeInTask?.cancel()
+        
+        // Clear subscriptions
+        subscriptions.removeAll()
+        
+        // Log cleanup
+        LoggingService.debug("Cleaned up resources for memory for video \(video.id)", component: "Player")
     }
 } 
