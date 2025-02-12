@@ -334,11 +334,7 @@ private struct ControlsOverlay: View {
                             isActive: viewModel.isSubscribedToNotifications
                         ) {
                             LoggingService.debug("Bell icon tapped for video: \(video.id)", component: "Player")
-                            // This is the notification flow, not calendar
                             viewModel.isSubscribedToNotifications.toggle()
-                            // Implementation of showing notification setup
-                            // or just open the VideoNotificationSetupView
-                            // (Left as is, user did not request removal of notifications)
                         }
                     }
                     .padding(.trailing, geometry.size.width * 0.05)
@@ -347,6 +343,7 @@ private struct ControlsOverlay: View {
             }
         }
         .transition(.opacity)
+        .zIndex(1) // Ensure controls are above video
     }
 }
 
@@ -369,11 +366,13 @@ private struct ControlButton: View {
                     .foregroundColor(.white)
                     .shadow(color: .black.opacity(0.6), radius: 4, x: 0, y: 2)
             }
+            .frame(width: 60, height: 70) // Increased touch target
+            .contentShape(Rectangle()) // Make entire area tappable
         }
         .buttonStyle(ScaleButtonStyle())
-        .frame(width: 44, height: 60)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(text) button")
         .accessibilityHint("Double tap to \(text.lowercased())")
+        .padding(10) // Add padding for better touch area
     }
 }

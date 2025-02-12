@@ -18,15 +18,16 @@ public class VideoFeedViewModel: ObservableObject {
     private var isFetching = false
     private var preloadedPlayers: [String: AVPlayer] = [:]
     private let batchSize = 5
-    private let preloadWindow = 2 // Number of videos to preload ahead and behind
+    private let preloadWindow = 3 // Increased from 2 to 3 for smoother scrolling
     private var preloadQueue = OperationQueue()
     private var preloadTasks: [String: Task<Void, Never>] = [:]
+    private var loadingStates: [String: Bool] = [:]
     
     // Dictionary to hold snapshot listeners for each video document
     private var videoListeners: [String: ListenerRegistration] = [:]
     
     public init() {
-        preloadQueue.maxConcurrentOperationCount = 2
+        preloadQueue.maxConcurrentOperationCount = 3 // Increased from 2 to 3
         LoggingService.video("Initialized with preload window of \(preloadWindow)", component: "Feed")
     }
     
@@ -58,31 +59,22 @@ public class VideoFeedViewModel: ObservableObject {
             let snapshot = try await query.getDocuments()
             var fetchedVideos: [Video] = []
             
-            for document in snapshot.documents {
-                LoggingService.debug("Processing document with ID: \(document.documentID)", component: "Feed")
-                
-                if let video = Video(document: document) {
-                    LoggingService.debug("Successfully parsed video. Status: \(video.processingStatus.rawValue), URL: \(video.videoURL)", component: "Feed")
-                    
-                    if video.processingStatus == .ready {
-                        if !video.videoURL.isEmpty {
-                            LoggingService.debug("Adding ready video: \(video.id)", component: "Feed")
-                            fetchedVideos.append(video)
-                            subscribeToUpdates(for: video)
-                            // Create player view model if not already created
-                            if playerViewModels[video.id] == nil {
-                                playerViewModels[video.id] = VideoPlayerViewModel(video: video)
+            // Pre-create all player view models in parallel
+            await withTaskGroup(of: Void.self) { group in
+                for document in snapshot.documents {
+                    group.addTask {
+                        if let video = Video(document: document),
+                           video.processingStatus == .ready,
+                           !video.videoURL.isEmpty {
+                            await MainActor.run {
+                                if self.playerViewModels[video.id] == nil {
+                                    self.playerViewModels[video.id] = VideoPlayerViewModel(video: video)
+                                    self.loadingStates[video.id] = true
+                                }
+                                fetchedVideos.append(video)
                             }
-                        } else {
-                            LoggingService.error("Skipping video \(document.documentID) - Empty video URL", component: "Feed")
                         }
-                    } else {
-                        LoggingService.debug("Skipping video \(document.documentID) - Status not ready: \(video.processingStatus.rawValue)", component: "Feed")
                     }
-                } else {
-                    LoggingService.error("Failed to parse video document \(document.documentID)", component: "Feed")
-                    let documentData = document.data()
-                    LoggingService.debug("Document data: \(documentData)", component: "Feed")
                 }
             }
             
@@ -90,11 +82,10 @@ public class VideoFeedViewModel: ObservableObject {
             self.videos = fetchedVideos
             self.lastDocument = snapshot.documents.last
             
-            // Preload the first two videos to improve initial scroll performance
+            // Preload first three videos immediately
             if !fetchedVideos.isEmpty {
-                await preloadVideo(at: 0)
-                if fetchedVideos.count > 1 {
-                    await preloadVideo(at: 1)
+                for i in 0..<min(3, fetchedVideos.count) {
+                    await preloadVideo(at: i)
                 }
             }
             

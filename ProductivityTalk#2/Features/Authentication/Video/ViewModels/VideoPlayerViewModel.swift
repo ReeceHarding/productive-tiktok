@@ -50,6 +50,15 @@ public class VideoPlayerViewModel: ObservableObject {
     @Published public var isBuffering = false
     @Published public var loadingProgress: Double = 0
     @Published public var isSubscribedToNotifications = false
+    @Published public var loadingState: LoadingState = .initial
+    
+    public enum LoadingState {
+        case initial
+        case loading
+        case buffering
+        case ready
+        case error(String)
+    }
     
     private var observers: Set<NSKeyValueObservation> = []
     private var timeObserverToken: Any?
@@ -59,6 +68,22 @@ public class VideoPlayerViewModel: ObservableObject {
     private var bufferingObserver: NSKeyValueObservation?
     private var loadingObserver: NSKeyValueObservation?
     private var notificationRequestIds: Set<String> = []
+    
+    // Cache for preloaded assets
+    private static var assetCache = NSCache<NSString, AVURLAsset>()
+    private static var thumbnailCache = NSCache<NSString, UIImage>()
+    private static var playerCache = NSCache<NSString, AVPlayer>()
+    
+    // Configure cache limits
+    private static let maxCacheSize = 100 * 1024 * 1024 // 100MB
+    private static let maxCacheCount = 10
+    
+    private static let setupOnce: Void = {
+        assetCache.totalCostLimit = maxCacheSize
+        assetCache.countLimit = maxCacheCount
+        playerCache.countLimit = maxCacheCount
+        thumbnailCache.countLimit = maxCacheCount * 2
+    }()
     
     // Used to ensure we don't double fade
     private var fadeTask: Task<Void, Never>?
@@ -79,6 +104,9 @@ public class VideoPlayerViewModel: ObservableObject {
     public init(video: Video) {
         self.video = video
         self.brainCount = video.brainCount
+        
+        // Configure caches once
+        _ = VideoPlayerViewModel.setupOnce
         
         // Disable Firestore debug logging
         Firestore.enableLogging(false)
@@ -160,7 +188,6 @@ public class VideoPlayerViewModel: ObservableObject {
         
         // Update the video model with the latest brain count
         self.video.brainCount = latestBrainCount
-        self.isInSecondBrain = isInSecondBrain
         print("Second brain check complete - isInSecondBrain: \(isInSecondBrain), brainCount: \(latestBrainCount)")
         
         await MainActor.run {
@@ -228,164 +255,138 @@ public class VideoPlayerViewModel: ObservableObject {
             } catch {
                 LoggingService.error("Error during cleanup in deinit for video \(videoId): \(error)", component: "Player")
             }
-        }
-        // Remove any pending notifications when the view model is deallocated
-        Task {
+            
+            // Remove any pending notifications when the view model is deallocated
             await self.removeNotification()
         }
     }
     
     public func loadVideo() async {
         LoggingService.debug("Starting video load for \(video.id)", component: "Player")
-        isLoading = true
+        loadingState = .loading
         loadingProgress = 0
         error = nil
         
-        // Check if we have a preloaded player first
+        // Check player cache first
+        let videoId = video.id as NSString
+        if let cachedPlayer = VideoPlayerViewModel.playerCache.object(forKey: videoId) {
+            LoggingService.debug("Using cached player for \(video.id)", component: "Player")
+            do {
+                try await setupPlayer(cachedPlayer)
+                return
+            } catch {
+                LoggingService.error("Failed to setup cached player: \(error)", component: "Player")
+            }
+        }
+        
+        // Check asset cache
+        let videoUrlString = video.videoURL as NSString
+        if let cachedAsset = VideoPlayerViewModel.assetCache.object(forKey: videoUrlString) {
+            LoggingService.debug("Using cached asset for \(video.id)", component: "Player")
+            do {
+                let player = AVPlayer(playerItem: AVPlayerItem(asset: cachedAsset))
+                try await setupPlayer(player)
+                VideoPlayerViewModel.playerCache.setObject(player, forKey: videoId)
+                return
+            } catch {
+                LoggingService.error("Failed to setup player with cached asset: \(error)", component: "Player")
+            }
+        }
+        
+        // Check if we have a preloaded player
         if let preloadedPlayer = preloadedPlayers[video.id] {
             LoggingService.debug("Using preloaded player for \(video.id)", component: "Player")
             do {
                 try await setupPlayer(preloadedPlayer)
                 preloadedPlayers.removeValue(forKey: video.id)
-            } catch {
-                self.error = "Failed to setup preloaded player: \(error.localizedDescription)"
-                isLoading = false
-                LoggingService.error("Failed to setup preloaded player for \(video.id): \(error)", component: "Player")
-            }
-            return
-        }
-        
-        guard let url = URL(string: video.videoURL) else {
-            error = "Invalid video URL"
-            isLoading = false
-            LoggingService.error("Invalid video URL for \(video.id): \(video.videoURL)", component: "Player")
-            return
-        }
-        
-        LoggingService.debug("Creating asset for \(video.id) with URL: \(url)", component: "Player")
-        
-        // Create asset with optimized loading options
-        let asset = AVURLAsset(url: url, options: [
-            "AVURLAssetOutOfBandMIMETypeKey": "video/mp4",
-            "AVURLAssetPreferPreciseDurationAndTimingKey": false
-        ])
-        
-        do {
-            try await setupNewPlayer(with: asset)
-        } catch {
-            self.error = "Failed to load video: \(error.localizedDescription)"
-            isLoading = false
-            LoggingService.error("Failed to setup new player for \(video.id): \(error)", component: "Player")
-        }
-    }
-    
-    private func setupNewPlayer(with asset: AVAsset) async throws {
-        do {
-            // Load essential properties
-            let playable = try await asset.load(.isPlayable)
-            
-            guard playable else {
-                await MainActor.run { 
-                    error = "Video format not supported"
-                    isLoading = false 
-                }
+                VideoPlayerViewModel.playerCache.setObject(preloadedPlayer, forKey: videoId)
                 return
+            } catch {
+                LoggingService.error("Failed to setup preloaded player: \(error)", component: "Player")
+            }
+        }
+        
+        // Normal loading path with optimizations
+        do {
+            guard let url = URL(string: video.videoURL) else {
+                throw NSError(domain: "Invalid URL", code: -1)
             }
             
-            // Load duration to update progress
-            let duration = try await asset.load(.duration)
-            let durationInSeconds = try await CMTimeGetSeconds(duration)
+            // Create optimized asset
+            let asset = AVURLAsset(url: url, options: [
+                "AVURLAssetPreferPreciseDurationAndTimingKey": false,
+                "AVURLAssetPreferredPeakBitRateKey": 2_000_000 // 2Mbps target bitrate
+            ])
             
-            let playerItem = AVPlayerItem(asset: asset)
-            playerItem.preferredForwardBufferDuration = 10
+            // Start loading the asset
+            let playableKey = "playable"
+            try await asset.loadValues(forKeys: [playableKey])
             
-            // Observe loading progress
-            loadingObserver = playerItem.observe(\.loadedTimeRanges) { [weak self] item, _ in
-                guard let self = self else { return }
-                let loadedRanges = item.loadedTimeRanges
-                if let timeRange = loadedRanges.first?.timeRangeValue {
-                    let loadedDuration = CMTimeGetSeconds(timeRange.duration)
-                    let progress = loadedDuration / durationInSeconds
-                    Task { @MainActor in
-                        self.loadingProgress = max(0, min(1, progress))
-                    }
-                }
+            guard asset.isPlayable else {
+                throw VideoPlayerError.assetNotPlayable
             }
             
-            let player = AVPlayer(playerItem: playerItem)
+            // Cache the asset
+            VideoPlayerViewModel.assetCache.setObject(asset, forKey: videoUrlString)
             
-            try await Task { [weak self] in
-                guard let self = self else { return }
-                try await self.setupPlayer(player)
-            }.value
+            let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+            try await setupPlayer(player)
+            
+            // Cache the player
+            VideoPlayerViewModel.playerCache.setObject(player, forKey: videoId)
+            
         } catch {
-            throw error
+            LoggingService.error("Failed to load video: \(error)", component: "Player")
+            self.error = error.localizedDescription
+            loadingState = .error(error.localizedDescription)
         }
     }
     
     private func setupPlayer(_ player: AVPlayer) async throws {
-        // Clean up existing player first
-        await cleanup()
+        // Remove existing observers
+        observers.forEach { $0.invalidate() }
+        observers.removeAll()
+        
+        // Configure player for optimal performance
+        player.automaticallyWaitsToMinimizeStalling = false
+        player.currentItem?.preferredForwardBufferDuration = 5 // 5 seconds buffer
+        player.currentItem?.canUseNetworkResourcesForLiveStreamingWhilePaused = false
         
         self.player = player
         
-        // Configure playback settings
-        player.automaticallyWaitsToMinimizeStalling = false
-        player.currentItem?.preferredForwardBufferDuration = 10
-        
-        // Add time observer for watchTime
-        addTimeObserver(to: player)
-        
-        // Add end of video observer for looping
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(playerItemDidReachEnd),
-            name: .AVPlayerItemDidPlayToEndTime,
-            object: player.currentItem
-        )
-        
-        // Observe buffering state
-        bufferingObserver = player.observe(\.timeControlStatus) { [weak self] player, _ in
+        // Setup buffering observer
+        let bufferingObserver = player.observe(\.currentItem?.isPlaybackBufferEmpty) { [weak self] player, _ in
+            guard let self = self else { return }
+            let isBuffering = player.currentItem?.isPlaybackBufferEmpty ?? false
             Task { @MainActor in
-                self?.isBuffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+                self.isBuffering = isBuffering
+                self.loadingState = isBuffering ? .buffering : .ready
             }
         }
+        observers.insert(bufferingObserver)
         
-        // Wait for player to be ready before attempting preroll
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let statusObserver = player.observe(\.status) { [weak self] player, _ in
-                guard let self = self else { return }
+        // Setup loading progress observer with optimized update frequency
+        let loadingObserver = player.observe(\.currentItem?.loadedTimeRanges) { [weak self] player, _ in
+            guard let self = self,
+                  let timeRange = player.currentItem?.loadedTimeRanges.first?.timeRangeValue else { return }
+            let duration = player.currentItem?.duration.seconds ?? 0
+            let progress = duration > 0 ? timeRange.end.seconds / duration : 0
+            if abs(progress - self.loadingProgress) > 0.05 { // Only update if change is significant
                 Task { @MainActor in
-                    switch player.status {
-                    case .failed:
-                        self.error = player.error?.localizedDescription
-                        continuation.resume(throwing: player.error ?? NSError(domain: "AVPlayer", code: -1))
-                    case .readyToPlay:
-                        // Start buffering only when player is ready
-                        Task {
-                            do {
-                                let success = try await player.preroll(atRate: 1.0)
-                                if success {
-                                    continuation.resume()
-                                } else {
-                                    continuation.resume(throwing: NSError(domain: "AVPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Preroll failed"]))
-                                }
-                            } catch {
-                                continuation.resume(throwing: error)
-                            }
-                        }
-                    default:
-                        break
-                    }
+                    self.loadingProgress = progress
                 }
             }
-            observers.insert(statusObserver)
+        }
+        observers.insert(loadingObserver)
+        
+        // Setup periodic time observer with optimized interval
+        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] _ in
+            guard let self = self else { return }
+            self.isPlaying = player.rate > 0
         }
         
-        isLoading = false
-        
-        // Store in preloaded players
-        preloadedPlayers[video.id] = player
+        loadingState = .ready
     }
     
     private func observePlayerStatus(_ player: AVPlayer) {
@@ -634,68 +635,28 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     public func preloadVideo(_ video: Video) async throws {
-        LoggingService.debug("Starting preload for video \(video.id)", component: "Player")
-        
-        // Don't preload if we already have this video preloaded
-        if preloadedPlayers[video.id] != nil {
-            LoggingService.debug("Video \(video.id) already preloaded", component: "Player")
-            return
-        }
+        LoggingService.debug("Preloading video \(video.id)", component: "Player")
         
         guard let url = URL(string: video.videoURL) else {
-            let error = NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid video URL"])
-            LoggingService.error("Invalid URL for video \(video.id): \(video.videoURL)", component: "Player")
-            throw error
+            throw NSError(domain: "Invalid URL", code: -1)
         }
         
-        // Create asset with optimized loading options
-        let asset = AVURLAsset(url: url, options: [
-            "AVURLAssetOutOfBandMIMETypeKey": "video/mp4",
-            "AVURLAssetPreferPreciseDurationAndTimingKey": false
-        ])
+        let asset = AVURLAsset(url: url)
         
-        do {
-            let playable = try await asset.load(.isPlayable)
-            
-            guard playable else {
-                let error = NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Video not playable"])
-                LoggingService.error("Video \(video.id) not playable", component: "Player")
-                throw error
-            }
-            
-            let playerItem = AVPlayerItem(asset: asset)
-            playerItem.preferredForwardBufferDuration = 10
-            let player = AVPlayer(playerItem: playerItem)
-            
-            // Configure playback settings
-            player.automaticallyWaitsToMinimizeStalling = false
-            
-            // Wait for player to be ready before prerolling
-            try await withCheckedThrowingContinuation { continuation in
-                let observer = player.observe(\.status) { player, _ in
-                    if player.status == .readyToPlay {
-                        continuation.resume()
-                    } else if player.status == .failed {
-                        continuation.resume(throwing: player.error ?? NSError(domain: "AVPlayer", code: -1))
-                    }
-                }
-                self.observers.insert(observer)
-            }
-            
-            // Now that player is ready, attempt preroll
-            let success = try await player.preroll(atRate: 1.0)
-            if success {
-                preloadedPlayers[video.id] = player
-                LoggingService.success("Successfully preloaded video \(video.id)", component: "Player")
-            } else {
-                let error = NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Preroll failed"])
-                LoggingService.error("Preroll failed for video \(video.id)", component: "Player")
-                throw error
-            }
-        } catch {
-            LoggingService.error("Failed to preload video \(video.id): \(error)", component: "Player")
-            throw error
+        // Start loading the asset
+        try await asset.load(.isPlayable)
+        
+        guard asset.isPlayable else {
+            throw VideoPlayerError.assetNotPlayable
         }
+        
+        // Cache the asset
+        VideoPlayerViewModel.assetCache.setObject(asset, forKey: video.videoURL as NSString)
+        
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        preloadedPlayers[video.id] = player
+        
+        LoggingService.debug("Successfully preloaded video \(video.id)", component: "Player")
     }
     
     // MARK: - Audio Fade
