@@ -432,29 +432,77 @@ extension VideoUploadView {
         let onDelete: () -> Void
 
         @State private var showComments = false
+        @State private var showTooltip = false
 
         var body: some View {
             VStack(alignment: .leading, spacing: 8) {
                 // Row top: thumbnail + basic info
                 HStack(alignment: .center, spacing: 12) {
-                    thumbnailView
-                        .frame(width: 80, height: 80)
-                        .cornerRadius(8)
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 80, height: 80)
+                        
+                        Image(systemName: "video.fill")
+                            .foregroundColor(.gray)
+                    }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(video.title)
+                        Text(video.title.isEmpty ? "Untitled" : video.title)
                             .font(.headline)
                             .foregroundColor(.primary)
                             .lineLimit(1)
 
-                        Text("Comments: \(video.commentCount)")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                        // Show processing status with color
+                        HStack {
+                            Circle()
+                                .fill(statusColor)
+                                .frame(width: 8, height: 8)
+                            Text(statusText)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            if let transcript = video.transcript, !transcript.isEmpty {
+                                Image(systemName: "text.bubble")
+                                    .foregroundColor(.blue)
+                                    .onTapGesture {
+                                        showTooltip.toggle()
+                                    }
+                            }
+                        }
+                        .popover(isPresented: $showTooltip) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Transcript Available")
+                                    .font(.headline)
+                                if let transcript = video.transcript {
+                                    Text(transcript.prefix(200))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding()
+                            .frame(width: 250)
+                        }
                     }
                     Spacer()
                 }
                 .padding(.vertical, 8)
+
+                // Row middle: stats with tooltips
+                HStack(spacing: 12) {
+                    StatLabel(count: video.viewCount, icon: "eye.fill", label: "Views")
+                    StatLabel(count: video.likeCount, icon: "hand.thumbsup.fill", label: "Likes")
+                    StatLabel(count: video.commentCount, icon: "text.bubble.fill", label: "Comments")
+                    StatLabel(count: video.saveCount, icon: "bookmark.fill", label: "Saves")
+                }
+                .padding(.horizontal, 12)
+
+                // Show engagement rate if available
+                if video.viewCount > 0 {
+                    Text("Engagement Rate: \(engagementRate)%")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 12)
+                }
 
                 // Row bottom: actions
                 HStack(spacing: 16) {
@@ -475,26 +523,70 @@ extension VideoUploadView {
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
             .sheet(isPresented: $showComments) {
-                // Present the CommentsView
                 CommentsView(video: video)
             }
         }
-
-        @ViewBuilder
-        private var thumbnailView: some View {
-            if let urlString = video.thumbnailURL,
-               let url = URL(string: urlString) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    ProgressView()
-                }
-            } else {
-                Image(systemName: "video.fill")
-                    .resizable()
-                    .scaledToFill()
-                    .foregroundColor(.gray)
+        
+        private var statusColor: Color {
+            switch video.processingStatus {
+            case .uploading, .transcribing, .extractingQuotes, .generatingMetadata, .processing:
+                return .orange
+            case .ready:
+                return .green
+            case .error:
+                return .red
             }
+        }
+        
+        private var statusText: String {
+            switch video.processingStatus {
+            case .uploading:
+                return "Uploading..."
+            case .transcribing:
+                return "Transcribing..."
+            case .extractingQuotes:
+                return "Extracting Quotes..."
+            case .generatingMetadata:
+                return "Generating Metadata..."
+            case .processing:
+                return "Processing..."
+            case .ready:
+                return "Ready"
+            case .error:
+                return "Error"
+            }
+        }
+        
+        private var engagementRate: String {
+            let totalEngagements = video.likeCount + video.commentCount + video.saveCount
+            let rate = Double(totalEngagements) / Double(max(1, video.viewCount)) * 100
+            return String(format: "%.1f", rate)
+        }
+    }
+    
+    private struct StatLabel: View {
+        let count: Int
+        let icon: String
+        let label: String
+        @State private var showTooltip = false
+        
+        var body: some View {
+            Label("\(count)", systemImage: icon)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .onTapGesture {
+                    showTooltip.toggle()
+                }
+                .popover(isPresented: $showTooltip) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(label)
+                            .font(.headline)
+                        Text("Total \(label.lowercased()): \(count)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding()
+                }
         }
     }
 }

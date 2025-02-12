@@ -74,7 +74,14 @@ final class VideoUploadViewModel: ObservableObject {
             let id = UUID().uuidString
             await MainActor.run {
                 LoggingService.debug("Creating initial upload state for video \(id)", component: "Upload")
-                self.uploadStates[id] = UploadState(progress: 0.0, isComplete: false, thumbnailImage: nil)
+                self.uploadStates[id] = UploadState(
+                    progress: 0.0,
+                    isComplete: false,
+                    thumbnailImage: nil,
+                    processingStatus: .uploading,
+                    transcript: nil,
+                    quotes: nil
+                )
             }
         }
         
@@ -347,23 +354,63 @@ final class VideoUploadViewModel: ObservableObject {
             }
             
             Task { @MainActor in
-                // Update processing status
+                // Update processing status with detailed logging
+                let oldStatus = self.uploadStates[id]?.processingStatus
                 self.uploadStates[id]?.processingStatus = video.processingStatus
                 
-                // Update transcript and quotes when available
+                if oldStatus != video.processingStatus {
+                    LoggingService.video("🔄 Video \(id) status changed: \(oldStatus?.rawValue ?? "none") -> \(video.processingStatus.rawValue)", component: "Upload")
+                    
+                    // Update progress based on status
+                    switch video.processingStatus {
+                    case .transcribing:
+                        self.uploadStates[id]?.progress = 0.4
+                        LoggingService.debug("📝 Starting transcription for \(id)", component: "Upload")
+                    case .extractingQuotes:
+                        self.uploadStates[id]?.progress = 0.6
+                        LoggingService.debug("💭 Extracting quotes for \(id)", component: "Upload")
+                    case .generatingMetadata:
+                        self.uploadStates[id]?.progress = 0.8
+                        LoggingService.debug("🏷️ Generating metadata for \(id)", component: "Upload")
+                    case .processing:
+                        self.uploadStates[id]?.progress = 0.9
+                        LoggingService.debug("⚙️ Final processing for \(id)", component: "Upload")
+                    case .ready:
+                        self.uploadStates[id]?.progress = 1.0
+                        self.uploadStates[id]?.isComplete = true
+                        LoggingService.success("✅ Processing complete for \(id)", component: "Upload")
+                    case .error:
+                        self.uploadStates[id]?.progress = 0.0
+                        self.uploadStates[id]?.isComplete = false
+                        LoggingService.error("❌ Processing failed for \(id)", component: "Upload")
+                    default:
+                        break
+                    }
+                }
+                
+                // Update transcript with logging
                 if let transcript = video.transcript {
+                    let isNewTranscript = self.uploadStates[id]?.transcript == nil
                     self.uploadStates[id]?.transcript = transcript
+                    if isNewTranscript {
+                        LoggingService.debug("📝 Received transcript for \(id) (\(transcript.prefix(50))...)", component: "Upload")
+                    }
                 }
                 
+                // Update quotes with logging
                 if let quotes = video.quotes {
+                    let isNewQuotes = self.uploadStates[id]?.quotes == nil
                     self.uploadStates[id]?.quotes = quotes
+                    if isNewQuotes {
+                        LoggingService.debug("💭 Received \(quotes.count) quotes for \(id)", component: "Upload")
+                    }
                 }
                 
-                // If processing is complete or failed, remove the listener
+                // Remove listener if processing is complete or failed
                 if video.processingStatus == .ready || video.processingStatus == .error {
                     self.documentListeners[id]?.remove()
                     self.documentListeners.removeValue(forKey: id)
-                    LoggingService.debug("Removed listener for video \(id)", component: "Upload")
+                    LoggingService.debug("🔄 Removed listener for video \(id) - Final status: \(video.processingStatus.rawValue)", component: "Upload")
                 }
             }
         }
