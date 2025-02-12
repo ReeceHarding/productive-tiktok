@@ -69,8 +69,6 @@ struct Comment: Identifiable, Codable {
         self.isInSecondBrain = data["isInSecondBrain"] as? Bool ?? false
         self.saveCount = data["saveCount"] as? Int ?? 0
         self.viewCount = data["viewCount"] as? Int ?? 0
-        
-        print("✅ Comment: Successfully parsed comment with ID: \(self.id)")
     }
     
     var toFirestore: [String: Any] {

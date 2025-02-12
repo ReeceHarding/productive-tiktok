@@ -1,6 +1,7 @@
 import Foundation
 import FirebaseFirestore
 import FirebaseAuth
+import FirebaseCore
 import Combine
 
 @MainActor
@@ -23,13 +24,14 @@ class CommentsViewModel: ObservableObject {
     // MARK: - Initialization
     init(video: Video) {
         self.video = video
-        LoggingService.debug("📱 CommentsViewModel: Initialized for video ID: \(video.id)", component: "Comments")
+        // Configure Firebase and Firestore logging to suppress internal logs
+        FirebaseConfiguration.shared.setLoggerLevel(.error)
+        Firestore.enableLogging(false)  // Disable Firestore debug logging
         setupCommentsListener()
     }
     
     // MARK: - Public Methods
     func refreshComments() async {
-        LoggingService.debug("🔄 CommentsViewModel: Refreshing comments", component: "Comments")
         lastDocument = nil
         comments = []
         await loadMoreComments()
@@ -39,14 +41,13 @@ class CommentsViewModel: ObservableObject {
         guard !isLoadingMore && hasMoreComments else { return }
         
         isLoadingMore = true
-        LoggingService.debug("📥 CommentsViewModel: Loading more comments", component: "Comments")
         
         do {
             var query = firestore
                 .collection("videos")
                 .document(video.id)
                 .collection("comments")
-                .order(by: "saveCount", descending: true) // Sort by saves first
+                .order(by: "saveCount", descending: true)
                 .limit(to: pageSize)
             
             if let lastDoc = lastDocument {
@@ -56,7 +57,6 @@ class CommentsViewModel: ObservableObject {
             let snapshot = try await query.getDocuments()
             
             guard !snapshot.documents.isEmpty else {
-                LoggingService.debug("📭 CommentsViewModel: No more comments to load", component: "Comments")
                 hasMoreComments = false
                 isLoadingMore = false
                 return
@@ -66,24 +66,22 @@ class CommentsViewModel: ObservableObject {
             
             let newComments: [Comment] = snapshot.documents.compactMap { document in
                 guard let comment = Comment(document: document) else {
-                    LoggingService.error("⚠️ CommentsViewModel: Failed to parse comment from doc: \(document.documentID)", component: "Comments")
+                    LoggingService.error("Failed to parse comment from doc: \(document.documentID)", component: "Comments")
                     return nil
                 }
                 return comment
             }
             
-            // Sort by save:view ratio
             let sortedComments = newComments.sorted { comment1, comment2 in
                 let ratio1 = Double(comment1.saveCount) / Double(max(comment1.viewCount, 1))
                 let ratio2 = Double(comment2.saveCount) / Double(max(comment2.viewCount, 1))
                 return ratio1 > ratio2
             }
             
-            LoggingService.debug("✅ CommentsViewModel: Loaded \(sortedComments.count) more comments", component: "Comments")
             comments.append(contentsOf: sortedComments)
             
         } catch {
-            LoggingService.error("❌ CommentsViewModel: Error loading more comments: \(error.localizedDescription)", component: "Comments")
+            LoggingService.error("Error loading more comments: \(error.localizedDescription)", component: "Comments")
             self.error = "Failed to load more comments: \(error.localizedDescription)"
         }
         
@@ -91,20 +89,14 @@ class CommentsViewModel: ObservableObject {
     }
     
     func addComment(text: String) async {
-        LoggingService.debug("📝 ViewModel attempting to add comment with text: '\(text)'", component: "Comments")
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            LoggingService.warning("⚠️ CommentsViewModel: Attempted to add empty comment", component: "Comments")
-            return
-        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         
         guard let userId = Auth.auth().currentUser?.uid else {
-            LoggingService.error("❌ CommentsViewModel: No authenticated user", component: "Comments")
             self.error = "Please sign in to comment"
             return
         }
         
         let commentText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        LoggingService.debug("📝 ViewModel creating comment with trimmed text: '\(commentText)'", component: "Comments")
         
         // Create optimistic comment
         let optimisticComment = Comment(
@@ -114,8 +106,6 @@ class CommentsViewModel: ObservableObject {
             userName: Auth.auth().currentUser?.displayName
         )
         
-        // Add optimistic comment to UI
-        LoggingService.debug("🔄 CommentsViewModel: Adding optimistic comment to UI", component: "Comments")
         comments.insert(optimisticComment, at: 0)
         
         do {
@@ -133,8 +123,6 @@ class CommentsViewModel: ObservableObject {
                 userName: userName,
                 userProfileImageURL: userProfileImageURL
             )
-            
-            LoggingService.debug("💾 CommentsViewModel: Saving comment to Firestore", component: "Comments")
             
             // Save to Firestore
             try await firestore
@@ -160,10 +148,8 @@ class CommentsViewModel: ObservableObject {
                 return nil
             })
             
-            LoggingService.success("✅ CommentsViewModel: Successfully added comment", component: "Comments")
-            
         } catch {
-            LoggingService.error("❌ CommentsViewModel: Error adding comment: \(error.localizedDescription)", component: "Comments")
+            LoggingService.error("Error adding comment: \(error.localizedDescription)", component: "Comments")
             // Remove optimistic comment on error
             if let index = comments.firstIndex(where: { $0.id == optimisticComment.id }) {
                 comments.remove(at: index)
@@ -174,12 +160,9 @@ class CommentsViewModel: ObservableObject {
     
     func toggleSecondBrain(for comment: Comment) async {
         guard Auth.auth().currentUser != nil else {
-            LoggingService.error("❌ Second Brain: No authenticated user", component: "Comments")
             self.error = "Please sign in to add to Second Brain"
             return
         }
-        
-        LoggingService.debug("🎬 Second Brain: Starting toggle process for comment ID: \(comment.id)", component: "Comments")
         
         let commentRef = firestore
             .collection("videos")
@@ -191,18 +174,14 @@ class CommentsViewModel: ObservableObject {
             // Optimistically update UI
             if let index = comments.firstIndex(where: { $0.id == comment.id }) {
                 comments[index].isInSecondBrain.toggle()
-                // Update save count optimistically
                 comments[index].saveCount += comments[index].isInSecondBrain ? 1 : -1
-                LoggingService.debug("✅ Second Brain: Optimistically updated UI", component: "Comments")
             }
             
             let _ = try await firestore.runTransaction({ (transaction, errorPointer) -> Any? in
                 let commentDoc: DocumentSnapshot
                 do {
                     commentDoc = try transaction.getDocument(commentRef)
-                    LoggingService.debug("✅ Second Brain: Retrieved comment document", component: "Comments")
                 } catch let fetchError as NSError {
-                    LoggingService.error("❌ Second Brain: Failed to fetch comment doc: \(fetchError.localizedDescription)", component: "Comments")
                     errorPointer?.pointee = fetchError
                     return nil
                 }
@@ -211,12 +190,10 @@ class CommentsViewModel: ObservableObject {
                 let newSecondBrainStatus = !(currentData["isInSecondBrain"] as? Bool ?? false)
                 currentData["isInSecondBrain"] = newSecondBrainStatus
                 
-                // Update save count
                 let currentSaveCount = currentData["saveCount"] as? Int ?? 0
                 currentData["saveCount"] = currentSaveCount + (newSecondBrainStatus ? 1 : -1)
                 
                 transaction.setData(currentData, forDocument: commentRef)
-                LoggingService.success("✅ Second Brain: Toggled status to \(newSecondBrainStatus)", component: "Comments")
                 return nil
             })
             
@@ -228,12 +205,11 @@ class CommentsViewModel: ObservableObject {
             }
             
         } catch {
-            LoggingService.error("❌ Second Brain: Error toggling status: \(error.localizedDescription)", component: "Comments")
+            LoggingService.error("Error toggling Second Brain status: \(error.localizedDescription)", component: "Comments")
             // Revert optimistic update on error
             if let index = comments.firstIndex(where: { $0.id == comment.id }) {
                 comments[index].isInSecondBrain.toggle()
                 comments[index].saveCount -= comments[index].isInSecondBrain ? 1 : -1
-                LoggingService.debug("↩️ Second Brain: Reverted UI update due to error", component: "Comments")
             }
             self.error = "Failed to update Second Brain status: \(error.localizedDescription)"
         }
@@ -241,7 +217,6 @@ class CommentsViewModel: ObservableObject {
     
     // MARK: - Private Methods
     private func setupCommentsListener() {
-        LoggingService.debug("🎧 CommentsViewModel: Setting up real-time comments listener", component: "Comments")
         isLoading = true
         
         listenerRegistration = firestore
@@ -254,37 +229,34 @@ class CommentsViewModel: ObservableObject {
                 guard let self = self else { return }
                 
                 if let error = error {
-                    LoggingService.error("❌ CommentsViewModel: Error listening for comments: \(error.localizedDescription)", component: "Comments")
+                    LoggingService.error("Error listening for comments: \(error.localizedDescription)", component: "Comments")
                     self.error = "Failed to load comments: \(error.localizedDescription)"
                     return
                 }
                 
-                guard let documents = snapshot?.documents else {
-                    LoggingService.warning("⚠️ CommentsViewModel: No documents in snapshot", component: "Comments")
-                    return
+                guard let documents = snapshot?.documents else { return }
+                
+                // Process new or modified documents only
+                let changedDocs = snapshot?.documentChanges.filter { $0.type == .added || $0.type == .modified } ?? []
+                
+                // Silently increment view count for new or modified documents
+                for change in changedDocs {
+                    Task {
+                        try? await self.firestore
+                            .collection("videos")
+                            .document(self.video.id)
+                            .collection("comments")
+                            .document(change.document.documentID)
+                            .updateData([
+                                "viewCount": FieldValue.increment(Int64(1)) as Any
+                            ])
+                    }
                 }
                 
                 let updatedComments = documents.compactMap { document -> Comment? in
                     guard let comment = Comment(document: document) else {
                         LoggingService.error("Failed to parse comment from doc: \(document.documentID)", component: "Comments")
                         return nil
-                    }
-                    
-                    // Increment view count
-                    Task {
-                        do {
-                            try await self.firestore
-                                .collection("videos")
-                                .document(self.video.id)
-                                .collection("comments")
-                                .document(comment.id)
-                                .updateData([
-                                    "viewCount": FieldValue.increment(Int64(1)) as Any
-                                ])
-                            LoggingService.debug("✅ Incremented viewCount for comment: \(comment.id)", component: "Comments")
-                        } catch {
-                            LoggingService.error("Failed to increment viewCount: \(error.localizedDescription)", component: "Comments")
-                        }
                     }
                     return comment
                 }
@@ -298,12 +270,10 @@ class CommentsViewModel: ObservableObject {
                 
                 self.comments = sortedComments
                 self.isLoading = false
-                LoggingService.debug("✅ CommentsViewModel: Updated comments list with \(sortedComments.count) comments", component: "Comments")
             }
     }
     
     deinit {
-        LoggingService.debug("🧹 CommentsViewModel: Cleaning up", component: "Comments")
         listenerRegistration?.remove()
     }
 }

@@ -18,11 +18,9 @@ class FirebaseConfig {
         FirebaseApp.configure()
         LoggingService.success("Firebase core configuration successful", component: "Config")
         
-        // Enable Firestore debug logging for development
-        #if DEBUG
+        // Disable all Firestore logging
         let db = Firestore.firestore()
-        Firestore.enableLogging(true)
-        LoggingService.debug("Enabled Firestore debug logging", component: "Config")
+        Firestore.enableLogging(false)
         
         // Configure cache settings
         let settings = db.settings
@@ -33,7 +31,6 @@ class FirebaseConfig {
         
         db.settings = settings
         LoggingService.success("Configured Firestore with persistence (100MB cache)", component: "Config")
-        #endif
         
         LoggingService.success("Firebase configuration completed successfully", component: "Config")
     }

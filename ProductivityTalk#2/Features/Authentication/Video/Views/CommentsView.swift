@@ -245,19 +245,14 @@ private struct CommentInputView: View {
                         .focused($isFocused)
                         .frame(minHeight: 44)
                         .accessibilityLabel("Comment input field")
-                        .onChange(of: text) { newValue in
-                            LoggingService.debug("📝 Comment text changed to: '\(newValue)'", component: "Comments")
-                        }
                     
                     Button(action: {
-                        LoggingService.debug("🔍 Submit button tapped with text: '\(text)'", component: "Comments")
                         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !trimmedText.isEmpty {
-                            onSubmit(text)
-                            text = ""
+                            let commentText = trimmedText // Capture the text value
+                            text = "" // Clear the text field
                             isFocused = false
-                        } else {
-                            LoggingService.warning("⚠️ Prevented submission of whitespace-only comment", component: "Comments")
+                            onSubmit(commentText) // Pass the captured text
                         }
                     }) {
                         Image(systemName: "arrow.up.circle.fill")
