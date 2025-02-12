@@ -10,7 +10,6 @@ struct CommentsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     
-    // Haptic feedback generators
     private let impactGenerator = UIImpactFeedbackGenerator(style: .medium)
     private let notificationGenerator = UINotificationFeedbackGenerator()
     
@@ -22,7 +21,6 @@ struct CommentsView: View {
     
     var body: some View {
         ZStack {
-            // Background blur and overlay
             Color.black.opacity(colorScheme == .dark ? 0.9 : 0.7)
                 .ignoresSafeArea()
             
@@ -76,10 +74,11 @@ struct CommentsView: View {
                 Divider()
                     .background(Color.secondary.opacity(0.2))
                 
-                // Comments List with Loading and Empty States
+                // Comments List with Loading or Empty states
                 Group {
                     if viewModel.isLoading {
-                        BrainLoadingView("Loading comments...")
+                        // Replace any spinner with LoadingAnimation
+                        LoadingAnimation(message: "Loading comments...")
                             .frame(maxHeight: .infinity)
                     } else if viewModel.comments.isEmpty {
                         EmptyCommentsView()
@@ -105,10 +104,10 @@ struct CommentsView: View {
                 // Comment Input
                 CommentInputView(
                     text: $viewModel.newCommentText,
-                    onSubmit: {
+                    onSubmit: { commentText in
                         impactGenerator.impactOccurred(intensity: 0.7)
                         Task {
-                            await viewModel.addComment()
+                            await viewModel.addComment(text: commentText)
                         }
                     }
                 )
@@ -148,13 +147,7 @@ private struct BrainLoadingView: View {
     
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "brain.head.profile")
-                .font(.system(size: 32))
-                .foregroundStyle(.secondary)
-                .rotationEffect(.degrees(isAnimating ? 360 : 0))
-                .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: isAnimating)
-                .onAppear { isAnimating = true }
-            
+            LoadingAnimation(message: nil)
             if let message = message {
                 Text(message)
                     .font(.footnote)
@@ -208,6 +201,7 @@ private struct CommentsList: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 
+                // Pagination
                 if viewModel.hasMoreComments {
                     BrainLoadingView()
                         .padding()
@@ -228,7 +222,7 @@ private struct CommentsList: View {
 private struct CommentInputView: View {
     @Binding var text: String
     @FocusState private var isFocused: Bool
-    let onSubmit: () -> Void
+    let onSubmit: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
@@ -236,9 +230,7 @@ private struct CommentInputView: View {
             Divider()
                 .background(Color.secondary.opacity(0.2))
             
-            // Input Area
             VStack(spacing: 16) {
-                // Text Input and Send Button
                 HStack(spacing: 12) {
                     TextField("Add a comment...", text: $text, axis: .vertical)
                         .textFieldStyle(.plain)
@@ -253,24 +245,30 @@ private struct CommentInputView: View {
                         .focused($isFocused)
                         .frame(minHeight: 44)
                         .accessibilityLabel("Comment input field")
+                        .onChange(of: text) { newValue in
+                            LoggingService.debug("📝 Comment text changed to: '\(newValue)'", component: "Comments")
+                        }
                     
                     Button(action: {
-                        if !text.isEmpty {
-                            onSubmit()
+                        LoggingService.debug("🔍 Submit button tapped with text: '\(text)'", component: "Comments")
+                        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmedText.isEmpty {
+                            onSubmit(text)
                             text = ""
                             isFocused = false
+                        } else {
+                            LoggingService.warning("⚠️ Prevented submission of whitespace-only comment", component: "Comments")
                         }
                     }) {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 32))
-                            .foregroundStyle(text.isEmpty ? .gray : .blue)
-                            .symbolEffect(.bounce, value: !text.isEmpty)
+                            .foregroundStyle(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .blue)
+                            .symbolEffect(.bounce, value: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    .disabled(text.isEmpty)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityLabel("Send comment")
                 }
                 
-                // Bottom Area with Home Indicator
                 Rectangle()
                     .fill(Color.gray.opacity(0.3))
                     .frame(width: 134, height: 5)
@@ -394,4 +392,4 @@ struct CommentCell: View {
         description: "Test Description",
         ownerUsername: "testUser"
     ))
-} 
+}

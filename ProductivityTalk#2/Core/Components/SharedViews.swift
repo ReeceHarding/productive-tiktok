@@ -1,21 +1,19 @@
 import SwiftUI
 
+/// A set of shared views for loading, refresh controls, and statistic cards.
+
 // MARK: - Shared Loading View
 public struct SharedLoadingView: View {
     let message: String
-    
+
     public init(_ message: String = "Loading...") {
         self.message = message
     }
-    
+
     public var body: some View {
         VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.5)
-            
-            Text(message)
-                .font(.headline)
-                .foregroundColor(.secondary)
+            // Replace the ProgressView with the custom LoadingAnimation
+            LoadingAnimation(message: message)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground).opacity(0.8))
@@ -27,12 +25,12 @@ public struct SharedLoadingView: View {
 public struct SharedRefreshControl: View {
     @Binding var isRefreshing: Bool
     let action: () async -> Void
-    
+
     public init(isRefreshing: Binding<Bool>, action: @escaping () async -> Void) {
         self._isRefreshing = isRefreshing
         self.action = action
     }
-    
+
     public var body: some View {
         GeometryReader { geometry in
             if geometry.frame(in: .global).minY > 50 {
@@ -48,7 +46,9 @@ public struct SharedRefreshControl: View {
             HStack {
                 Spacer()
                 if isRefreshing {
-                    ProgressView()
+                    // Replace default spinner with LoadingAnimation
+                    LoadingAnimation(message: nil)
+                        .frame(width: 32, height: 32)
                 }
                 Spacer()
             }
@@ -63,14 +63,14 @@ public struct SharedStatisticCard: View {
     let value: String
     let icon: String
     let color: Color
-    
+
     public init(title: String, value: String, icon: String, color: Color) {
         self.title = title
         self.value = value
         self.icon = icon
         self.color = color
     }
-    
+
     public var body: some View {
         VStack(spacing: 12) {
             Image(systemName: icon)
@@ -98,17 +98,3 @@ public struct SharedStatisticCard: View {
         .accessibilityLabel("\(title): \(value)")
     }
 }
-
-#Preview {
-    VStack(spacing: 20) {
-        SharedLoadingView("Preview Loading...")
-        
-        SharedStatisticCard(
-            title: "Views",
-            value: "1.2K",
-            icon: "eye.fill",
-            color: .blue
-        )
-    }
-    .padding()
-} 

@@ -137,8 +137,8 @@ struct SignUpView: View {
                         }) {
                             HStack {
                                 if viewModel.isLoading {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    LoadingAnimation()
+                                        .frame(width: 24, height: 24)
                                         .padding(.trailing, 5)
                                 }
                                 Text("Sign Up")

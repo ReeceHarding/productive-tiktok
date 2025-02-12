@@ -7,15 +7,12 @@ struct VideoFeedView: View {
     @State private var scrollPosition: String?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
-    @State private var showingSchedulingView = false
     @State private var selectedVideo: Video?
-    
+
     var body: some View {
         VideoFeedScrollView(
             videos: viewModel.videos,
-            scrollPosition: $scrollPosition,
-            selectedVideo: $selectedVideo,
-            showingSchedulingView: $showingSchedulingView
+            scrollPosition: $scrollPosition
         )
         .background(.black)
         .overlay {
@@ -37,15 +34,6 @@ struct VideoFeedView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             handleScenePhaseChange(newPhase)
-        }
-        .sheet(isPresented: $showingSchedulingView) {
-            if let video = selectedVideo,
-               let transcript = video.transcript {
-                SchedulingView(
-                    transcript: transcript,
-                    videoTitle: video.title
-                )
-            }
         }
     }
     
@@ -73,9 +61,7 @@ struct VideoFeedView: View {
 private struct VideoFeedScrollView: View {
     let videos: [Video]
     @Binding var scrollPosition: String?
-    @Binding var selectedVideo: Video?
-    @Binding var showingSchedulingView: Bool
-    
+
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
@@ -104,6 +90,7 @@ private struct VideoFeedOverlay: View {
     var body: some View {
         Group {
             if isLoading {
+                // Replace system spinner with LoadingAnimation
                 LoadingAnimation(message: "Loading videos...")
                     .foregroundColor(.white)
             } else if let error = error {
@@ -117,24 +104,6 @@ private struct VideoFeedOverlay: View {
     }
 }
 
-// MARK: - TabBarButton
-private struct TabBarButton: View {
-    let icon: String
-    let text: String
-    let isSelected: Bool
-    
-    var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 24))
-            Text(text)
-                .font(.caption2)
-        }
-        .foregroundColor(isSelected ? .blue : .gray)
-        .frame(maxWidth: .infinity)
-    }
-}
-
 #Preview {
     VideoFeedView()
-} 
+}

@@ -1,44 +1,37 @@
 import SwiftUI
 import PhotosUI
-import AVKit
+import AVFoundation
+import FirebaseStorage
+import FirebaseFirestore
 
-@MainActor
 struct VideoUploadView: View {
-    // ViewModel for uploading videos
-    @StateObject private var uploadViewModel: VideoUploadViewModel
-    // ViewModel for managing existing videos and stats
+    @StateObject private var viewModel = VideoUploadViewModel()
     @StateObject private var managementViewModel = VideoManagementViewModel()
 
-    // Controls error handling and sheet presentations
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
     init(viewModel: VideoUploadViewModel? = nil) {
-        // If provided with a custom VM, use it; otherwise create a new instance
         let vm = viewModel ?? VideoUploadViewModel()
-        _uploadViewModel = StateObject(wrappedValue: vm)
+        _viewModel = StateObject(wrappedValue: vm)
     }
 
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
-
-                    // MARK: - Dashboard Header
+                    // Dashboard header
                     dashboardHeader
-
-                    // MARK: - Statistics Overview
+                    // Stats overview
                     if managementViewModel.isLoading {
-                        ProgressView("Loading Dashboard...")
+                        LoadingAnimation(message: "Loading Dashboard...")
                             .padding()
                     } else {
                         statsGrid
                     }
-
-                    // MARK: - Upload Section
+                    // Upload Section
                     uploadSection
-
-                    // MARK: - Previously Uploaded Videos
+                    // Previously uploaded videos
                     uploadedVideosList
                 }
                 .padding(.vertical)
@@ -51,13 +44,12 @@ struct VideoUploadView: View {
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
-                .ignoresSafeArea()
+                    .ignoresSafeArea()
             )
-            // Alert handling
-            .alert("Error", isPresented: $uploadViewModel.showError) {
+            .alert("Error", isPresented: $viewModel.showError) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(uploadViewModel.errorMessage ?? "An unknown error occurred")
+                Text(viewModel.errorMessage ?? "An unknown error occurred")
             }
             .alert("Management Error", isPresented: .constant(managementViewModel.error != nil)) {
                 Button("OK", role: .cancel) {
@@ -69,26 +61,20 @@ struct VideoUploadView: View {
                 }
             }
             .onAppear {
-                // Load existing videos once this screen appears
                 Task {
                     await managementViewModel.loadVideos()
                 }
             }
         }
-        .onChange(of: uploadViewModel.selectedItems) { newValue in
+        .onChange(of: viewModel.selectedItems) { newValue in
             if !newValue.isEmpty {
                 Task {
-                    await uploadViewModel.loadVideos()
+                    await viewModel.loadVideos()
                 }
             }
         }
     }
-}
-
-// MARK: - Subviews
-extension VideoUploadView {
     
-    // Dashboard Title
     private var dashboardHeader: some View {
         VStack(spacing: 8) {
             Text("Manage & Upload Videos")
@@ -102,10 +88,8 @@ extension VideoUploadView {
         .padding(.top, 16)
     }
 
-    // Grid of stats from managementViewModel.statistics
     private var statsGrid: some View {
         let stats = managementViewModel.statistics
-        // We'll present them in two columns
         return VStack(spacing: 16) {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
                 StatCard(
@@ -143,12 +127,10 @@ extension VideoUploadView {
         .padding(.horizontal)
     }
 
-    // Upload Section
     private var uploadSection: some View {
         VStack(spacing: 20) {
-            // Upload selection area
             PhotosPicker(
-                selection: $uploadViewModel.selectedItems,
+                selection: $viewModel.selectedItems,
                 matching: .videos,
                 photoLibrary: .shared()
             ) {
@@ -156,8 +138,8 @@ extension VideoUploadView {
                     Image(systemName: "video.badge.plus")
                         .font(.system(size: 40))
                         .foregroundColor(.blue)
-
-                    if uploadViewModel.uploadStates.isEmpty {
+                    
+                    if viewModel.uploadStates.isEmpty {
                         Text("Tap to Upload Videos")
                             .font(.headline)
                         Text("Select one or more videos to upload.")
@@ -169,7 +151,7 @@ extension VideoUploadView {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: uploadViewModel.uploadStates.isEmpty ? 150 : 80)
+                .frame(height: viewModel.uploadStates.isEmpty ? 150 : 80)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
                         .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [10]))
@@ -177,12 +159,11 @@ extension VideoUploadView {
                 )
                 .padding(.horizontal, 20)
             }
-
-            // Upload progress list
-            if !uploadViewModel.uploadStates.isEmpty {
+            
+            if !viewModel.uploadStates.isEmpty {
                 VStack(spacing: 12) {
-                    ForEach(Array(uploadViewModel.uploadStates.keys), id: \.self) { id in
-                        if let state = uploadViewModel.uploadStates[id] {
+                    ForEach(Array(viewModel.uploadStates.keys), id: \.self) { id in
+                        if let state = viewModel.uploadStates[id] {
                             UploadProgressRow(fileId: id, state: state)
                         }
                     }
@@ -193,7 +174,6 @@ extension VideoUploadView {
         .padding(.top, 16)
     }
 
-    // List of previously uploaded videos
     private var uploadedVideosList: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -206,9 +186,9 @@ extension VideoUploadView {
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal, 16)
-
+            
             if managementViewModel.isLoading {
-                ProgressView("Loading videos...")
+                LoadingAnimation(message: "Loading videos...")
                     .padding()
             } else if managementViewModel.videos.isEmpty {
                 Text("No videos uploaded yet.")
@@ -236,10 +216,7 @@ extension VideoUploadView {
     }
 }
 
-// MARK: - Helper Views
 extension VideoUploadView {
-
-    /// A reusable card for showing stats in a 2-column layout
     private struct StatCard: View {
         let title: String
         let value: String
@@ -270,48 +247,28 @@ extension VideoUploadView {
         }
     }
 
-    /// A row displaying upload progress or completion status for a single video upload
     private struct UploadProgressRow: View {
         let fileId: String
         let state: VideoUploadViewModel.UploadState
 
         var body: some View {
             VStack(spacing: 12) {
-                // Main row content
                 HStack(spacing: 16) {
-                    if let thumbnail = state.thumbnailImage {
-                        Image(uiImage: thumbnail)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                    // no thumbnail for now
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.3))
                             .frame(width: 60, height: 60)
-                            .cornerRadius(8)
-                    } else {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.gray.opacity(0.3))
-                                .frame(width: 60, height: 60)
 
-                            Image(systemName: "video.fill")
-                                .foregroundColor(.gray)
-                        }
+                        Image(systemName: "video.fill")
+                            .foregroundColor(.gray)
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        // Title and ID
                         Text("Video \(fileId.prefix(8))")
                             .font(.subheadline)
                             .foregroundColor(.primary)
-                            .onAppear {
-                                LoggingService.debug("UploadProgressRow appeared for video \(fileId), status: \(state.processingStatus.rawValue), progress: \(Int(state.progress * 100))%", component: "UploadUI")
-                            }
-                            .onChange(of: state.processingStatus) { _, newStatus in
-                                LoggingService.debug("UploadProgressRow status changed for video \(fileId) to: \(newStatus.rawValue), progress: \(Int(state.progress * 100))%", component: "UploadUI")
-                            }
-                            .onChange(of: state.progress) { _, newProgress in
-                                LoggingService.debug("UploadProgressRow progress changed for video \(fileId) to: \(Int(newProgress * 100))%, status: \(state.processingStatus.rawValue)", component: "UploadUI")
-                            }
 
-                        // Status Message with Icon
                         HStack(spacing: 4) {
                             Image(systemName: statusIcon)
                                 .foregroundColor(statusColor)
@@ -320,7 +277,6 @@ extension VideoUploadView {
                                 .foregroundColor(statusColor)
                         }
 
-                        // Progress Section
                         if !state.isComplete && state.processingStatus != .error {
                             GeometryReader { geometry in
                                 ZStack(alignment: .leading) {
@@ -336,22 +292,18 @@ extension VideoUploadView {
                                 }
                             }
                             .frame(height: 6)
-                            .onChange(of: state.progress) { _, newProgress in
-                                LoggingService.debug("UploadProgressRow progress bar updated for video \(fileId): \(Int(newProgress * 100))%", component: "UploadUI")
-                            }
                         }
                     }
                     Spacer()
                 }
                 
-                // Processing Stages Section
+                // Processing Stages
                 if state.processingStatus != .error {
                     VStack(alignment: .leading, spacing: 8) {
-                        // Show current processing stage
                         if !state.isComplete {
                             HStack(spacing: 4) {
-                                ProgressView()
-                                    .scaleEffect(0.7)
+                                LoadingAnimation(message: nil)
+                                    .frame(width: 24, height: 24)
                                 Text(processingStageMessage)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
@@ -359,13 +311,14 @@ extension VideoUploadView {
                             .padding(.top, 4)
                         }
                         
-                        // Show transcript when available
+                        // Transcript
                         if let transcript = state.transcript,
-                           state.processingStatus == .extractingQuotes || state.processingStatus == .generatingMetadata || state.processingStatus == .ready {
+                           state.processingStatus == .extractingQuotes
+                           || state.processingStatus == .generatingMetadata
+                           || state.processingStatus == .ready {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Generated Transcript")
                                     .font(.caption)
-                                    .foregroundColor(.primary)
                                     .fontWeight(.medium)
                                 Text(transcript)
                                     .font(.caption)
@@ -375,14 +328,11 @@ extension VideoUploadView {
                             .padding(.vertical, 4)
                         }
                         
-                        // Show quotes when available
-                        if let quotes = state.quotes,
-                           !quotes.isEmpty,
-                           state.processingStatus == .generatingMetadata || state.processingStatus == .ready {
+                        // Quotes
+                        if let quotes = state.quotes, !quotes.isEmpty {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Extracted Quotes")
                                     .font(.caption)
-                                    .foregroundColor(.primary)
                                     .fontWeight(.medium)
                                 ForEach(quotes.prefix(3), id: \.self) { quote in
                                     Text("• \(quote)")
@@ -402,7 +352,6 @@ extension VideoUploadView {
                     .padding(.top, 4)
                 }
                 
-                // Error Message if any
                 if state.processingStatus == .error {
                     Text("Upload failed. Please try again.")
                         .font(.caption)
@@ -418,7 +367,6 @@ extension VideoUploadView {
             )
         }
         
-        // Helper computed properties for UI
         private var statusIcon: String {
             switch state.processingStatus {
             case .uploading:
@@ -427,9 +375,7 @@ extension VideoUploadView {
                 return "text.bubble"
             case .extractingQuotes:
                 return "quote.bubble"
-            case .generatingMetadata:
-                return "gear.circle"
-            case .processing:
+            case .generatingMetadata, .processing:
                 return "gear.circle"
             case .ready:
                 return "checkmark.circle.fill"
@@ -442,9 +388,7 @@ extension VideoUploadView {
             switch state.processingStatus {
             case .uploading:
                 return .blue
-            case .transcribing, .extractingQuotes, .generatingMetadata:
-                return .orange
-            case .processing:
+            case .transcribing, .extractingQuotes, .generatingMetadata, .processing:
                 return .orange
             case .ready:
                 return .green
@@ -477,23 +421,20 @@ extension VideoUploadView {
         }
     }
 
-    /// A row for each previously uploaded video in the user's library
     private struct VideoRow: View {
         let video: Video
         let onDelete: () -> Void
 
         @State private var showComments = false
-        @State private var showTooltip = false
 
         var body: some View {
             VStack(alignment: .leading, spacing: 8) {
-                // Row top: thumbnail + basic info
+                // Row top
                 HStack(alignment: .center, spacing: 12) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color.gray.opacity(0.3))
                             .frame(width: 80, height: 80)
-                        
                         Image(systemName: "video.fill")
                             .foregroundColor(.gray)
                     }
@@ -504,7 +445,6 @@ extension VideoUploadView {
                             .foregroundColor(.primary)
                             .lineLimit(1)
 
-                        // Show processing status with color
                         HStack {
                             Circle()
                                 .fill(statusColor)
@@ -512,33 +452,12 @@ extension VideoUploadView {
                             Text(statusText)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
-                            if let transcript = video.transcript, !transcript.isEmpty {
-                                Image(systemName: "text.bubble")
-                                    .foregroundColor(.blue)
-                                    .onTapGesture {
-                                        showTooltip.toggle()
-                                    }
-                            }
-                        }
-                        .popover(isPresented: $showTooltip) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Transcript Available")
-                                    .font(.headline)
-                                if let transcript = video.transcript {
-                                    Text(transcript.prefix(200))
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            .padding()
-                            .frame(width: 250)
                         }
                     }
                     Spacer()
                 }
                 .padding(.vertical, 8)
 
-                // Row middle: stats with tooltips
                 HStack(spacing: 12) {
                     StatLabel(count: video.viewCount, icon: "eye.fill", label: "Views")
                     StatLabel(count: video.likeCount, icon: "hand.thumbsup.fill", label: "Likes")
@@ -547,7 +466,6 @@ extension VideoUploadView {
                 }
                 .padding(.horizontal, 12)
 
-                // Show engagement rate if available
                 if video.viewCount > 0 {
                     Text("Engagement Rate: \(engagementRate)%")
                         .font(.caption)
@@ -555,15 +473,12 @@ extension VideoUploadView {
                         .padding(.horizontal, 12)
                 }
 
-                // Row bottom: actions
                 HStack(spacing: 16) {
                     Button(action: { showComments = true }) {
                         Label("View Comments", systemImage: "text.bubble")
                             .font(.subheadline)
                     }
-
                     Spacer()
-
                     Button(role: .destructive, action: onDelete) {
                         Label("Delete", systemImage: "trash")
                             .font(.subheadline)
@@ -619,6 +534,7 @@ extension VideoUploadView {
         let count: Int
         let icon: String
         let label: String
+        
         @State private var showTooltip = false
         
         var body: some View {
@@ -644,4 +560,4 @@ extension VideoUploadView {
 
 #Preview {
     VideoUploadView()
-} 
+}
