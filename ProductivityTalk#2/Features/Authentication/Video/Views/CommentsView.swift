@@ -79,7 +79,7 @@ struct CommentsView: View {
                 // Comments List with Loading and Empty States
                 Group {
                     if viewModel.isLoading {
-                        SharedLoadingView("Loading comments...")
+                        BrainLoadingView("Loading comments...")
                             .frame(maxHeight: .infinity)
                     } else if viewModel.comments.isEmpty {
                         EmptyCommentsView()
@@ -138,6 +138,32 @@ struct CommentsView: View {
 
 // MARK: - Supporting Views
 
+private struct BrainLoadingView: View {
+    let message: String?
+    @State private var isAnimating = false
+    
+    init(_ message: String? = nil) {
+        self.message = message
+    }
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "brain.head.profile")
+                .font(.system(size: 32))
+                .foregroundStyle(.secondary)
+                .rotationEffect(.degrees(isAnimating ? 360 : 0))
+                .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: isAnimating)
+                .onAppear { isAnimating = true }
+            
+            if let message = message {
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 private struct EmptyCommentsView: View {
     var body: some View {
         VStack(spacing: 16) {
@@ -183,7 +209,7 @@ private struct CommentsList: View {
                 }
                 
                 if viewModel.hasMoreComments {
-                    ProgressView()
+                    BrainLoadingView()
                         .padding()
                         .onAppear {
                             Task {
@@ -212,20 +238,37 @@ private struct CommentInputView: View {
             
             // Input Area
             VStack(spacing: 16) {
-                // Text Input
-                TextField("Add a comment...", text: $text, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.body)
-                    .foregroundColor(.primary)
-                    .padding(.vertical, 12)
-                    .padding(.horizontal, 16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 24)
-                            .fill(Color(colorScheme == .dark ? .systemGray6 : .systemGray6))
-                    )
-                    .focused($isFocused)
-                    .frame(minHeight: 44)
-                    .accessibilityLabel("Comment input field")
+                // Text Input and Send Button
+                HStack(spacing: 12) {
+                    TextField("Add a comment...", text: $text, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.body)
+                        .foregroundColor(.primary)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 24)
+                                .fill(Color(colorScheme == .dark ? .systemGray6 : .systemGray6))
+                        )
+                        .focused($isFocused)
+                        .frame(minHeight: 44)
+                        .accessibilityLabel("Comment input field")
+                    
+                    Button(action: {
+                        if !text.isEmpty {
+                            onSubmit()
+                            text = ""
+                            isFocused = false
+                        }
+                    }) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundStyle(text.isEmpty ? .gray : .blue)
+                            .symbolEffect(.bounce, value: !text.isEmpty)
+                    }
+                    .disabled(text.isEmpty)
+                    .accessibilityLabel("Send comment")
+                }
                 
                 // Bottom Area with Home Indicator
                 Rectangle()

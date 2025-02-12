@@ -46,7 +46,7 @@ class CommentsViewModel: ObservableObject {
                 .collection("videos")
                 .document(video.id)
                 .collection("comments")
-                .order(by: "timestamp", descending: true)
+                .order(by: "saveCount", descending: true) // Sort by saves first
                 .limit(to: pageSize)
             
             if let lastDoc = lastDocument {
@@ -72,8 +72,15 @@ class CommentsViewModel: ObservableObject {
                 return comment
             }
             
-            LoggingService.debug("✅ CommentsViewModel: Loaded \(newComments.count) more comments", component: "Comments")
-            comments.append(contentsOf: newComments)
+            // Sort by save:view ratio
+            let sortedComments = newComments.sorted { comment1, comment2 in
+                let ratio1 = Double(comment1.saveCount) / Double(max(comment1.viewCount, 1))
+                let ratio2 = Double(comment2.saveCount) / Double(max(comment2.viewCount, 1))
+                return ratio1 > ratio2
+            }
+            
+            LoggingService.debug("✅ CommentsViewModel: Loaded \(sortedComments.count) more comments", component: "Comments")
+            comments.append(contentsOf: sortedComments)
             
         } catch {
             LoggingService.error("❌ CommentsViewModel: Error loading more comments: \(error.localizedDescription)", component: "Comments")
@@ -189,6 +196,8 @@ class CommentsViewModel: ObservableObject {
             // Optimistically update UI
             if let index = comments.firstIndex(where: { $0.id == comment.id }) {
                 comments[index].isInSecondBrain.toggle()
+                // Update save count optimistically
+                comments[index].saveCount += comments[index].isInSecondBrain ? 1 : -1
                 LoggingService.debug("✅ Second Brain: Optimistically updated UI", component: "Comments")
             }
             
@@ -207,10 +216,21 @@ class CommentsViewModel: ObservableObject {
                 let newSecondBrainStatus = !(currentData["isInSecondBrain"] as? Bool ?? false)
                 currentData["isInSecondBrain"] = newSecondBrainStatus
                 
+                // Update save count
+                let currentSaveCount = currentData["saveCount"] as? Int ?? 0
+                currentData["saveCount"] = currentSaveCount + (newSecondBrainStatus ? 1 : -1)
+                
                 transaction.setData(currentData, forDocument: commentRef)
                 LoggingService.success("✅ Second Brain: Successfully toggled status to \(newSecondBrainStatus)", component: "Comments")
                 return nil
             })
+            
+            // Re-sort comments after updating save count
+            comments.sort { comment1, comment2 in
+                let ratio1 = Double(comment1.saveCount) / Double(max(comment1.viewCount, 1))
+                let ratio2 = Double(comment2.saveCount) / Double(max(comment2.viewCount, 1))
+                return ratio1 > ratio2
+            }
             
         } catch {
             LoggingService.error("❌ Second Brain: Error toggling status: \(error.localizedDescription)", component: "Comments")
@@ -218,6 +238,7 @@ class CommentsViewModel: ObservableObject {
             // Revert optimistic update on error
             if let index = comments.firstIndex(where: { $0.id == comment.id }) {
                 comments[index].isInSecondBrain.toggle()
+                comments[index].saveCount -= comments[index].isInSecondBrain ? 1 : -1
                 LoggingService.debug("↩️ Second Brain: Reverted UI update due to error", component: "Comments")
             }
             
@@ -234,7 +255,7 @@ class CommentsViewModel: ObservableObject {
             .collection("videos")
             .document(video.id)
             .collection("comments")
-            .order(by: "timestamp", descending: true)
+            .order(by: "saveCount", descending: true)
             .limit(to: pageSize)
             .addSnapshotListener { [weak self] snapshot, error in
                 guard let self = self else { return }
@@ -250,19 +271,42 @@ class CommentsViewModel: ObservableObject {
                     return
                 }
                 
-                LoggingService.debug("📥 CommentsViewModel: Received \(documents.count) comments", component: "Comments")
-                
-                self.comments = documents.compactMap { document in
+                let updatedComments = documents.compactMap { document -> Comment? in
                     guard let comment = Comment(document: document) else {
-                        LoggingService.error("⚠️ CommentsViewModel: Failed to parse comment from document: \(document.documentID)", component: "Comments")
+                        LoggingService.error("Failed to parse comment from document: \(document.documentID)", component: "Comments")
                         return nil
                     }
+                    
+                    // Increment view count
+                    Task {
+                        do {
+                            try await self.firestore
+                                .collection("videos")
+                                .document(self.video.id)
+                                .collection("comments")
+                                .document(comment.id)
+                                .updateData([
+                                    "viewCount": FieldValue.increment(Int64(1))
+                                ])
+                            LoggingService.debug("✅ Incremented view count for comment: \(comment.id)", component: "Comments")
+                        } catch {
+                            LoggingService.error("Failed to increment view count: \(error.localizedDescription)", component: "Comments")
+                        }
+                    }
+                    
                     return comment
                 }
                 
-                self.lastDocument = documents.last
-                self.hasMoreComments = documents.count >= self.pageSize
+                // Sort by save:view ratio
+                let sortedComments = updatedComments.sorted { comment1, comment2 in
+                    let ratio1 = Double(comment1.saveCount) / Double(max(comment1.viewCount, 1))
+                    let ratio2 = Double(comment2.saveCount) / Double(max(comment2.viewCount, 1))
+                    return ratio1 > ratio2
+                }
+                
+                self.comments = sortedComments
                 self.isLoading = false
+                LoggingService.debug("✅ CommentsViewModel: Updated comments list with \(sortedComments.count) comments", component: "Comments")
             }
     }
     

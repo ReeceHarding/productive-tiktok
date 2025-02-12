@@ -61,7 +61,7 @@ public class VideoPlayerViewModel: ObservableObject {
     
     // Used to ensure we don't double fade
     private var fadeTask: Task<Void, Never>?
-    private var fadeInTask: Task<Void, Never>?
+    private var fadeInTask: Task<Void, Error>?
     
     // Additional concurrency
     private var isCleaningUp = false
@@ -177,8 +177,12 @@ public class VideoPlayerViewModel: ObservableObject {
                 await handler()
             }
             try? await Task.sleep(nanoseconds: 100_000_000) // Small delay to ensure cleanup completes
-            await self.cleanup()
-            LoggingService.debug("VideoPlayerViewModel deinit for video \(videoId)", component: "Player")
+            do {
+                await self.cleanup()
+                LoggingService.debug("VideoPlayerViewModel deinit for video \(videoId)", component: "Player")
+            } catch {
+                LoggingService.error("Error during cleanup in deinit for video \(videoId): \(error)", component: "Player")
+            }
         }
         // Remove any pending notifications when the view model is deallocated
         Task {
@@ -195,8 +199,14 @@ public class VideoPlayerViewModel: ObservableObject {
         // Check if we have a preloaded player first
         if let preloadedPlayer = preloadedPlayers[video.id] {
             LoggingService.video("✅ Using preloaded player for \(video.id)", component: "Player")
-            await setupPlayer(preloadedPlayer)
-            preloadedPlayers.removeValue(forKey: video.id)
+            do {
+                try await setupPlayer(preloadedPlayer)
+                preloadedPlayers.removeValue(forKey: video.id)
+            } catch {
+                LoggingService.error("Failed to setup preloaded player: \(error.localizedDescription)", component: "Player")
+                self.error = "Failed to setup preloaded player: \(error.localizedDescription)"
+                isLoading = false
+            }
             return
         }
         
@@ -260,14 +270,21 @@ public class VideoPlayerViewModel: ObservableObject {
             
             let player = AVPlayer(playerItem: playerItem)
             
-            await setupPlayer(player)
+            await Task { [weak self] in
+                guard let self = self else { return }
+                do {
+                    try await self.setupPlayer(player)
+                } catch {
+                    LoggingService.error("Failed to setup player: \(error)", component: "Player")
+                }
+            }.value
         } catch {
             LoggingService.error("Failed to setup player: \(error.localizedDescription)", component: "Player")
             throw error
         }
     }
     
-    private func setupPlayer(_ player: AVPlayer) async {
+    private func setupPlayer(_ player: AVPlayer) async throws {
         LoggingService.video("Setting up player for \(video.id)", component: "Player")
         
         // Clean up existing player first
@@ -298,7 +315,7 @@ public class VideoPlayerViewModel: ObservableObject {
         }
         
         // Wait for player to be ready before attempting preroll
-        try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let statusObserver = player.observe(\.status) { [weak self] player, _ in
                 guard let self = self else { return }
                 Task { @MainActor in
@@ -310,13 +327,20 @@ public class VideoPlayerViewModel: ObservableObject {
                     case .readyToPlay:
                         LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                         // Start buffering only when player is ready
-                        let success = await player.preroll(atRate: 1.0)
-                        if success {
-                            LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
-                            continuation.resume()
-                        } else {
-                            LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
-                            continuation.resume(throwing: NSError(domain: "AVPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Preroll failed"]))
+                        Task {
+                            do {
+                                let success = try await player.preroll(atRate: 1.0)
+                                if success {
+                                    LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
+                                    continuation.resume()
+                                } else {
+                                    LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
+                                    continuation.resume(throwing: NSError(domain: "AVPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Preroll failed"]))
+                                }
+                            } catch {
+                                LoggingService.error("Preroll error for \(self.video.id): \(error)", component: "Player")
+                                continuation.resume(throwing: error)
+                            }
                         }
                     default:
                         break
@@ -345,11 +369,12 @@ public class VideoPlayerViewModel: ObservableObject {
                 case .readyToPlay:
                     LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                     // Start buffering only when player is ready
-                    let success = await player.preroll(atRate: 1.0)
-                    if success {
-                        LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
-                    } else {
-                        LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
+                    if let success = try? await player.preroll(atRate: 1.0) {
+                        if success {
+                            LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
+                        } else {
+                            LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
+                        }
                     }
                 default:
                     break
@@ -535,10 +560,16 @@ public class VideoPlayerViewModel: ObservableObject {
         
         guard let player = player else { return }
         
+        // Ensure volume is set to 1.0 initially
+        player.volume = 1.0
+        
         // Start playback
         player.play()
         isPlaying = true
         VideoPlayerViewModel.currentlyPlayingViewModel = self
+        
+        // Cancel any existing fade tasks
+        cancelFades()
         
         // Fade in audio
         do {
@@ -589,45 +620,48 @@ public class VideoPlayerViewModel: ObservableObject {
             "AVURLAssetPreferPreciseDurationAndTimingKey": false
         ])
         
-        Task {
-            do {
-                let playable = try await asset.load(.isPlayable)
-                
-                guard playable else {
-                    LoggingService.error("Preloaded asset not playable for \(video.id)", component: "Player")
-                    return
-                }
-                
-                let playerItem = AVPlayerItem(asset: asset)
-                playerItem.preferredForwardBufferDuration = 10
-                let player = AVPlayer(playerItem: playerItem)
-                
-                // Configure playback settings
-                player.automaticallyWaitsToMinimizeStalling = false
-                
-                // Wait for player to be ready before prerolling
-                try await withCheckedThrowingContinuation { continuation in
-                    let observer = player.observe(\.status) { player, _ in
-                        if player.status == .readyToPlay {
-                            continuation.resume()
-                        } else if player.status == .failed {
-                            continuation.resume(throwing: player.error ?? NSError(domain: "AVPlayer", code: -1))
-                        }
+        do {
+            let playable = try await asset.load(.isPlayable)
+            
+            guard playable else {
+                LoggingService.error("Preloaded asset not playable for \(video.id)", component: "Player")
+                return
+            }
+            
+            let playerItem = AVPlayerItem(asset: asset)
+            playerItem.preferredForwardBufferDuration = 10
+            let player = AVPlayer(playerItem: playerItem)
+            
+            // Configure playback settings
+            player.automaticallyWaitsToMinimizeStalling = false
+            
+            // Wait for player to be ready before prerolling
+            try await withCheckedThrowingContinuation { continuation in
+                let observer = player.observe(\.status) { player, _ in
+                    if player.status == .readyToPlay {
+                        continuation.resume()
+                    } else if player.status == .failed {
+                        continuation.resume(throwing: player.error ?? NSError(domain: "AVPlayer", code: -1))
                     }
-                    self.observers.insert(observer)
                 }
-                
-                // Now that player is ready, attempt preroll
-                if await player.preroll(atRate: 1.0) {
-                    // Store in preloaded players
+                self.observers.insert(observer)
+            }
+            
+            // Now that player is ready, attempt preroll
+            do {
+                let success = try await player.preroll(atRate: 1.0)
+                if success {
+                    LoggingService.video("✅ Successfully prerolled video \(video.id)", component: "Player")
                     preloadedPlayers[video.id] = player
-                    LoggingService.video("✅ Successfully preloaded video \(video.id)", component: "Player")
+                    LoggingService.video("✅ Stored preloaded player for video \(video.id)", component: "Player")
                 } else {
                     LoggingService.error("Failed to preroll video \(video.id)", component: "Player")
                 }
             } catch {
-                LoggingService.error("Failed to preload video \(video.id): \(error.localizedDescription)", component: "Player")
+                LoggingService.error("Preroll error for \(video.id): \(error)", component: "Player")
             }
+        } catch {
+            LoggingService.error("Failed to preload video \(video.id): \(error.localizedDescription)", component: "Player")
         }
     }
     
@@ -659,18 +693,32 @@ public class VideoPlayerViewModel: ObservableObject {
         // Start with volume at 0
         player.volume = 0
         
-        // Implement manual volume fade
-        let steps = 10
-        let duration = 0.5
-        let stepDuration = duration / Double(steps)
+        // Cancel any existing fade tasks
+        cancelFades()
         
-        for i in 0...steps {
-            if Task.isCancelled { return }
-            player.volume = Float(i) / Float(steps)
-            try await Task.sleep(nanoseconds: UInt64(stepDuration * 1_000_000_000))
+        // Create new fade in task
+        fadeInTask = Task<Void, Error> {
+            // Implement manual volume fade
+            let steps = 10
+            let duration = 0.5
+            let stepDuration = duration / Double(steps)
+            
+            for i in 0...steps {
+                if Task.isCancelled { return }
+                player.volume = Float(i) / Float(steps)
+                try await Task.sleep(nanoseconds: UInt64(stepDuration * 1_000_000_000))
+            }
+            
+            // Ensure we end at full volume
+            if !Task.isCancelled {
+                player.volume = 1.0
+            }
+            
+            LoggingService.debug("Audio fade complete for video \(video.id)", component: "Player")
         }
         
-        LoggingService.debug("Audio fade complete for video \(video.id)", component: "Player")
+        // Wait for fade to complete
+        try await fadeInTask?.value
     }
     
     @MainActor
@@ -708,7 +756,7 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private func prerollIfNeeded() async throws {
         guard let player = player else { return }
-        let success = await player.preroll(atRate: 1.0)
+        let success = try await player.preroll(atRate: 1.0)
         if success {
             LoggingService.video("Preroll complete for \(video.id)", component: "Player")
         } else {

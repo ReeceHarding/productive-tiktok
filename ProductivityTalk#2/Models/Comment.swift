@@ -10,6 +10,8 @@ struct Comment: Identifiable, Codable {
     var userName: String?
     var userProfileImageURL: String?
     var isInSecondBrain: Bool
+    var saveCount: Int
+    var viewCount: Int
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -20,6 +22,8 @@ struct Comment: Identifiable, Codable {
         case userName
         case userProfileImageURL
         case isInSecondBrain
+        case saveCount
+        case viewCount
     }
     
     init(id: String = UUID().uuidString,
@@ -29,7 +33,9 @@ struct Comment: Identifiable, Codable {
          timestamp: Date = Date(),
          userName: String? = nil,
          userProfileImageURL: String? = nil,
-         isInSecondBrain: Bool = false) {
+         isInSecondBrain: Bool = false,
+         saveCount: Int = 0,
+         viewCount: Int = 0) {
         self.id = id
         self.videoId = videoId
         self.userId = userId
@@ -38,6 +44,8 @@ struct Comment: Identifiable, Codable {
         self.userName = userName
         self.userProfileImageURL = userProfileImageURL
         self.isInSecondBrain = isInSecondBrain
+        self.saveCount = saveCount
+        self.viewCount = viewCount
     }
     
     init?(document: QueryDocumentSnapshot) {
@@ -59,6 +67,8 @@ struct Comment: Identifiable, Codable {
         self.userName = data["userName"] as? String
         self.userProfileImageURL = data["userProfileImageURL"] as? String
         self.isInSecondBrain = data["isInSecondBrain"] as? Bool ?? false
+        self.saveCount = data["saveCount"] as? Int ?? 0
+        self.viewCount = data["viewCount"] as? Int ?? 0
         
         print("✅ Comment: Successfully parsed comment with ID: \(self.id)")
     }
@@ -69,7 +79,9 @@ struct Comment: Identifiable, Codable {
             "userId": userId,
             "text": text,
             "timestamp": Timestamp(date: timestamp),
-            "isInSecondBrain": isInSecondBrain
+            "isInSecondBrain": isInSecondBrain,
+            "saveCount": saveCount,
+            "viewCount": viewCount
         ]
         
         if let userName = userName {

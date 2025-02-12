@@ -115,14 +115,6 @@ struct MainTabView: View {
                             }
                         }
                     
-                    Text("Calendar")
-                        .tabItem {
-                            VStack {
-                                Image(systemName: "calendar")
-                                Text("Calendar")
-                            }
-                        }
-                    
                     NavigationView {
                         ProfileView()
                     }

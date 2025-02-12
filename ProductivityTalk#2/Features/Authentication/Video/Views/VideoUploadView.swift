@@ -301,6 +301,15 @@ extension VideoUploadView {
                         Text("Video \(fileId.prefix(8))")
                             .font(.subheadline)
                             .foregroundColor(.primary)
+                            .onAppear {
+                                LoggingService.debug("UploadProgressRow appeared for video \(fileId), status: \(state.processingStatus.rawValue), progress: \(Int(state.progress * 100))%", component: "UploadUI")
+                            }
+                            .onChange(of: state.processingStatus) { _, newStatus in
+                                LoggingService.debug("UploadProgressRow status changed for video \(fileId) to: \(newStatus.rawValue), progress: \(Int(state.progress * 100))%", component: "UploadUI")
+                            }
+                            .onChange(of: state.progress) { _, newProgress in
+                                LoggingService.debug("UploadProgressRow progress changed for video \(fileId) to: \(Int(newProgress * 100))%, status: \(state.processingStatus.rawValue)", component: "UploadUI")
+                            }
 
                         // Status Message with Icon
                         HStack(spacing: 4) {
@@ -327,47 +336,70 @@ extension VideoUploadView {
                                 }
                             }
                             .frame(height: 6)
+                            .onChange(of: state.progress) { _, newProgress in
+                                LoggingService.debug("UploadProgressRow progress bar updated for video \(fileId): \(Int(newProgress * 100))%", component: "UploadUI")
+                            }
                         }
                     }
                     Spacer()
                 }
                 
-                // Show transcript when available
-                if let transcript = state.transcript,
-                   state.processingStatus == .extractingQuotes || state.processingStatus == .generatingMetadata || state.processingStatus == .ready {
+                // Processing Stages Section
+                if state.processingStatus != .error {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Transcript")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        Text(transcript)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(3)
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(8)
-                }
-                
-                // Show quotes when available
-                if let quotes = state.quotes,
-                   !quotes.isEmpty,
-                   state.processingStatus == .generatingMetadata || state.processingStatus == .ready {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Extracted Quotes")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        ForEach(quotes, id: \.self) { quote in
-                            Text("• \(quote)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        // Show current processing stage
+                        if !state.isComplete {
+                            HStack(spacing: 4) {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                Text(processingStageMessage)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.top, 4)
+                        }
+                        
+                        // Show transcript when available
+                        if let transcript = state.transcript,
+                           state.processingStatus == .extractingQuotes || state.processingStatus == .generatingMetadata || state.processingStatus == .ready {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Generated Transcript")
+                                    .font(.caption)
+                                    .foregroundColor(.primary)
+                                    .fontWeight(.medium)
+                                Text(transcript)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(3)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        
+                        // Show quotes when available
+                        if let quotes = state.quotes,
+                           !quotes.isEmpty,
+                           state.processingStatus == .generatingMetadata || state.processingStatus == .ready {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Extracted Quotes")
+                                    .font(.caption)
+                                    .foregroundColor(.primary)
+                                    .fontWeight(.medium)
+                                ForEach(quotes.prefix(3), id: \.self) { quote in
+                                    Text("• \(quote)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                if quotes.count > 3 {
+                                    Text("+ \(quotes.count - 3) more quotes")
+                                        .font(.caption)
+                                        .foregroundColor(.blue)
+                                }
+                            }
+                            .padding(.vertical, 4)
                         }
                     }
                     .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(8)
+                    .padding(.top, 4)
                 }
                 
                 // Error Message if any
@@ -423,6 +455,25 @@ extension VideoUploadView {
         
         private var progressColor: Color {
             statusColor
+        }
+        
+        private var processingStageMessage: String {
+            switch state.processingStatus {
+            case .uploading:
+                return "Uploading video to server..."
+            case .transcribing:
+                return "Generating transcript using Whisper AI..."
+            case .extractingQuotes:
+                return "Extracting meaningful quotes using GPT-4..."
+            case .generatingMetadata:
+                return "Generating title, description, and tags..."
+            case .processing:
+                return "Processing video..."
+            case .ready:
+                return "Processing complete"
+            case .error:
+                return "Processing failed"
+            }
         }
     }
 
