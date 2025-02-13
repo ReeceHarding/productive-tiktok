@@ -8,6 +8,7 @@ public struct VideoPlayerView: View {
     @StateObject var viewModel: VideoPlayerViewModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
+    @Binding var shouldAutoPlay: Bool
     @State private var showComments = false
     @State private var showShareSheet = false
     @State private var isOverlayVisible = true
@@ -20,8 +21,9 @@ public struct VideoPlayerView: View {
     @State private var toastMessage = ""
     private let hapticManager = UINotificationFeedbackGenerator()
     
-    init(video: Video) {
+    init(video: Video, shouldAutoPlay: Binding<Bool>) {
         self.video = video
+        self._shouldAutoPlay = shouldAutoPlay
         self._viewModel = StateObject(wrappedValue: VideoPlayerViewModel(video: video))
         LoggingService.video("Initializing VideoPlayerView for video: \(video.id)", component: "UI")
     }
@@ -51,6 +53,26 @@ public struct VideoPlayerView: View {
                             }
                         }
                     )
+                    .overlay(
+                        // Play/Pause tap area (excluding the control buttons area)
+                        GeometryReader { geometry in
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    Task {
+                                        if viewModel.isPlaying {
+                                            await viewModel.pause()
+                                        } else {
+                                            await viewModel.play()
+                                        }
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .frame(maxHeight: geometry.size.height * 0.85) // Leave space for controls
+                        }
+                    )
+                    // Disable default video controls
+                    .disabled(true)
             } else {
                 VideoLoadingView(progress: $loadingProgress)
                     .containerRelativeFrame([.horizontal, .vertical])
@@ -83,23 +105,25 @@ public struct VideoPlayerView: View {
             
             // Toast Message
             if let message = viewModel.toastMessage {
-                ToastView(message: message)
+                VideoPlayerToastView(message: message)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(2)
             }
         }
         .background(Color.black)
         .task {
+            LoggingService.debug("🎥 VideoPlayerView task started for \(video.id), shouldAutoPlay: \(shouldAutoPlay)", component: "UI")
             if !viewModel.isLoading && viewModel.player == nil {
                 await viewModel.loadVideo()
             }
         }
         .onAppear {
-            LoggingService.video("Video view appeared for \(video.id)", component: "Player")
+            LoggingService.video("Video view appeared for \(video.id), shouldAutoPlay: \(shouldAutoPlay)", component: "UI")
             isVisible = true
         }
         .task(id: isVisible) {
-            if isVisible && !viewModel.isLoading {
+            if isVisible && !viewModel.isLoading && shouldAutoPlay {
+                LoggingService.debug("🎬 Auto-playing video \(video.id) as it's visible and allowed", component: "UI")
                 await viewModel.play()
             }
         }
@@ -242,6 +266,7 @@ private struct ControlsOverlay: View {
                                 viewModel.brainAnimationPosition = location
                             }
                         )
+                        .allowsHitTesting(true)
                         
                         // Comment Button
                         ControlButton(
@@ -254,6 +279,7 @@ private struct ControlsOverlay: View {
                             },
                             onLocationUpdate: { _ in }
                         )
+                        .allowsHitTesting(true)
                         
                         // Notification Bell Button
                         ControlButton(
@@ -270,42 +296,31 @@ private struct ControlsOverlay: View {
                                         let settings = await center.notificationSettings()
                                         
                                         if settings.authorizationStatus == .authorized {
-                                            // Create notification content
-                                            let content = UNMutableNotificationContent()
-                                            content.title = "New Content Available"
-                                            content.body = "Check out new content from \(viewModel.video.ownerUsername)"
-                                            content.sound = .default
-                                            
-                                            // Create trigger for 24 hours from now
-                                            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 24 * 60 * 60, repeats: false)
-                                            
-                                            // Create request with unique identifier
-                                            let requestId = UUID().uuidString
-                                            let request = UNNotificationRequest(identifier: requestId, content: content, trigger: trigger)
-                                            
-                                            do {
-                                                try await center.add(request)
-                                                viewModel.updateNotificationState(requestId: requestId)
-                                            } catch {
-                                                print("Error scheduling notification: \(error)")
+                                            // Show notification setup view
+                                            let setupView = VideoNotificationSetupView(
+                                                videoId: viewModel.video.id,
+                                                originalTranscript: viewModel.video.transcript ?? ""
+                                            )
+                                            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                                               let root = windowScene.windows.first?.rootViewController {
+                                                let hostingController = UIHostingController(rootView: setupView)
+                                                root.present(hostingController, animated: true)
                                             }
                                         } else {
                                             // Request permission if not granted
                                             do {
                                                 let granted = try await center.requestAuthorization(options: [.alert, .sound])
                                                 if granted {
-                                                    // Retry scheduling notification
-                                                    let content = UNMutableNotificationContent()
-                                                    content.title = "New Content Available"
-                                                    content.body = "Check out new content from \(viewModel.video.ownerUsername)"
-                                                    content.sound = .default
-                                                    
-                                                    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 24 * 60 * 60, repeats: false)
-                                                    let requestId = UUID().uuidString
-                                                    let request = UNNotificationRequest(identifier: requestId, content: content, trigger: trigger)
-                                                    
-                                                    try await center.add(request)
-                                                    viewModel.updateNotificationState(requestId: requestId)
+                                                    // Show notification setup view after permission granted
+                                                    let setupView = VideoNotificationSetupView(
+                                                        videoId: viewModel.video.id,
+                                                        originalTranscript: viewModel.video.transcript ?? ""
+                                                    )
+                                                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                                                       let root = windowScene.windows.first?.rootViewController {
+                                                        let hostingController = UIHostingController(rootView: setupView)
+                                                        root.present(hostingController, animated: true)
+                                                    }
                                                 }
                                             } catch {
                                                 print("Error requesting notification permission: \(error)")
@@ -314,15 +329,16 @@ private struct ControlsOverlay: View {
                                     }
                                 }
                             },
-                            onLocationUpdate: { location in
-                                viewModel.brainAnimationPosition = location
-                            }
+                            onLocationUpdate: { _ in }
                         )
+                        .allowsHitTesting(true)
                     }
                     .padding(.trailing, geometry.size.width * 0.05)
                     .padding(.bottom, geometry.size.height * 0.15)
                 }
             }
+            .contentShape(Rectangle())
+            .allowsHitTesting(true)
         }
         .transition(.opacity)
     }
@@ -410,22 +426,24 @@ struct ButtonFramePreferenceKey: PreferenceKey {
         description: "This is a mock video for testing",
         ownerUsername: "mockUser"
     )
-    return VideoPlayerView(video: mockVideo)
+    return VideoPlayerView(video: mockVideo, shouldAutoPlay: .constant(true))
 }
 
 // Add ToastView at the end of the file
-private struct ToastView: View {
-    let message: String
+private struct VideoPlayerToastView: View {
+    let message: String?
     
     var body: some View {
-        Text(message)
-            .font(.subheadline.bold())
-            .foregroundStyle(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(Color.black.opacity(0.8))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .shadow(color: .black.opacity(0.2), radius: 4)
-            .padding(.top, 50)
+        if let message = message {
+            Text(message)
+                .font(.subheadline.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color.black.opacity(0.8))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .shadow(color: .black.opacity(0.2), radius: 4)
+                .padding(.top, 50)
+        }
     }
 }

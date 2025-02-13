@@ -148,8 +148,14 @@ exports.processVideo = onObjectFinalized({
     try {
       console.log("🎯 Extracting quotes using GPT-4...");
       const chatPrompt = 
-        "Extract 2-3 insightful quotes from the following video transcript for a second brain. " +
-        "Format each quote on a new line starting with a dash (-). Keep them brief and meaningful.\n" +
+        "Extract 3-5 actionable insights from the following video transcript. " +
+        "Each insight should be a standalone, meaningful quote that someone can take action on. " +
+        "Format requirements:\n" +
+        "- Make each quote direct and actionable\n" +
+        "- Remove any numbering or bullet points\n" +
+        "- Start each quote on a new line\n" +
+        "- Keep quotes concise (max 100 characters)\n" +
+        "- Focus on practical advice and key takeaways\n" +
         `Transcript:\n"${transcriptText}"`;
 
       const chatRes = await axios.post(
@@ -157,8 +163,8 @@ exports.processVideo = onObjectFinalized({
         {
           model: "gpt-4",
           messages: [{role: "user", content: chatPrompt}],
-          max_tokens: 150,
-          temperature: 0.5,
+          max_tokens: 250,  // Increased to accommodate more quotes
+          temperature: 0.7,  // Slightly increased for more creative variations
         },
         {
           headers: {
@@ -174,8 +180,8 @@ exports.processVideo = onObjectFinalized({
       const quotes = quoteText
         .split("\n")
         .map((line) => line.trim())
-        .filter((line) => line.startsWith("-"))
-        .map((line) => line.substring(1).trim());
+        .filter((line) => line && !line.startsWith("-"))  // Remove empty lines and any remaining dashes
+        .map((line) => line.replace(/^\d+\.\s*/, ""));  // Remove any numbering
       
       console.log("📊 Extracted quotes:", quotes);
 

@@ -136,13 +136,23 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     @MainActor
-    private func cleanup() async {
+    func cleanup() async {
+        LoggingService.debug("🧹 Starting cleanup for video \(video.id)", component: "PlayerVM")
         if isCleaningUp {
+            LoggingService.debug("Already cleaning up video \(video.id), skipping", component: "PlayerVM")
             return
         }
         isCleaningUp = true
         
+        // First ensure playback is stopped
+        if let player = player {
+            LoggingService.debug("Stopping playback during cleanup for \(video.id)", component: "PlayerVM")
+            player.pause()
+            player.volume = 0 // Immediately silence
+        }
+        
         // Invalidate observers - this is thread-safe
+        LoggingService.debug("Invalidating observers for video \(video.id)", component: "PlayerVM")
         observers.forEach { $0.invalidate() }
         observers.removeAll()
         
@@ -154,20 +164,30 @@ public class VideoPlayerViewModel: ObservableObject {
         
         // Remove time observer
         if let token = timeObserverToken, let player = player {
+            LoggingService.debug("Removing time observer for video \(video.id)", component: "PlayerVM")
             player.removeTimeObserver(token)
             timeObserverToken = nil
         }
         
         // Clean up player
         if let player = player {
-            player.pause()
+            LoggingService.debug("Final player cleanup for video \(video.id)", component: "PlayerVM")
             player.replaceCurrentItem(with: nil)
         }
         player = nil
         isPlaying = false
         
+        // Clear static reference if this was the current player
+        if VideoPlayerViewModel.currentlyPlayingViewModel === self {
+            LoggingService.debug("Clearing static reference to current player for \(video.id)", component: "PlayerVM")
+            VideoPlayerViewModel.currentlyPlayingViewModel = nil
+        }
+        
         isCleaningUp = false
-        LoggingService.debug("Cleaned up player resources", component: "Player")
+        LoggingService.debug("✅ Cleanup complete for video \(video.id)", component: "PlayerVM")
+        
+        // Small delay to ensure audio system is fully reset
+        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
     }
     
     deinit {
@@ -333,6 +353,9 @@ public class VideoPlayerViewModel: ObservableObject {
                                 let success = try await player.preroll(atRate: 1.0)
                                 if success {
                                     LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
+                                    // Initiate autoplay after successful preroll
+                                    LoggingService.debug("▶️ Attempting autoplay for video \(self.video.id)", component: "Player")
+                                    await self.play()
                                     continuation.resume()
                                 } else {
                                     LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
@@ -560,11 +583,66 @@ public class VideoPlayerViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Enhanced Play Method
+    public func play() async {
+        LoggingService.debug("🎬 Starting play() for video \(video.id)", component: "PlayerVM")
+        // Initialize player if needed
+        if player == nil || player?.currentItem == nil {
+            LoggingService.debug("No player exists, loading video first", component: "PlayerVM")
+            await loadVideo()
+        }
+        
+        guard let player = player else {
+            LoggingService.debug("❌ Failed to get player instance for video \(video.id)", component: "PlayerVM")
+            return
+        }
+        
+        LoggingService.debug("Setting initial volume to 1.0 for video \(video.id)", component: "PlayerVM")
+        // Ensure volume is set to 1.0 initially
+        player.volume = 1.0
+        
+        // Start playback
+        LoggingService.debug("🔊 Starting playback for video \(video.id)", component: "PlayerVM")
+        player.play()
+        isPlaying = true
+        
+        // Check if another video is currently playing
+        if let currentPlaying = VideoPlayerViewModel.currentlyPlayingViewModel,
+           currentPlaying !== self {
+            LoggingService.debug("⚠️ Found another playing video (\(currentPlaying.video.id)), cleaning up", component: "PlayerVM")
+            await currentPlaying.cleanup()
+        }
+        
+        VideoPlayerViewModel.currentlyPlayingViewModel = self
+        
+        // Cancel any existing fade tasks
+        LoggingService.debug("Cancelling any existing fade tasks for video \(video.id)", component: "PlayerVM")
+        cancelFades()
+        
+        // Fade in audio
+        do {
+            LoggingService.debug("Starting audio fade in for video \(video.id)", component: "PlayerVM")
+            try await fadeInAudio()
+            LoggingService.debug("✅ Audio fade in complete for video \(video.id)", component: "PlayerVM")
+        } catch {
+            LoggingService.error("Error during audio fade: \(error)", component: "PlayerVM")
+        }
+        
+        // Increment view count
+        do {
+            try await incrementViewCount()
+        } catch {
+            LoggingService.error("Failed to increment view count: \(error)", component: "PlayerVM")
+        }
+    }
+    
     // MARK: - New Method: Pause Playback
     /// Immediately pauses the AVPlayer and updates the isPlaying flag.
     /// This method is used to ensure that offscreen players do not play audio.
     public func pausePlayback() async {
-        LoggingService.debug("pausePlayback() called for video \(video.id)", component: "PlayerVM")
+        LoggingService.debug("⏸️ pausePlayback() called for video \(video.id)", component: "PlayerVM")
+        LoggingService.debug("Current volume: \(player?.volume ?? -1)", component: "PlayerVM")
+        
         if let player = player {
             // Fade out audio
             let fadeTime = 0.3
@@ -575,48 +653,15 @@ public class VideoPlayerViewModel: ObservableObject {
                 player.volume = player.volume - volumeDecrement
                 LoggingService.debug("Fading out audio: step \(step) of \(steps), volume=\(player.volume)", component: "PlayerVM")
             }
+            LoggingService.debug("Pausing player for video \(video.id)", component: "PlayerVM")
             player.pause()
         }
         isPlaying = false
         if VideoPlayerViewModel.currentlyPlayingViewModel === self {
+            LoggingService.debug("Clearing currently playing video reference", component: "PlayerVM")
             VideoPlayerViewModel.currentlyPlayingViewModel = nil
         }
-        LoggingService.debug("Player paused and isPlaying set to false for video \(video.id)", component: "PlayerVM")
-    }
-    
-    // MARK: - Enhanced Play Method
-    public func play() async {
-        // Initialize player if needed
-        if player == nil || player?.currentItem == nil {
-            await loadVideo()
-        }
-        
-        guard let player = player else { return }
-        
-        // Ensure volume is set to 1.0 initially
-        player.volume = 1.0
-        
-        // Start playback
-        player.play()
-        isPlaying = true
-        VideoPlayerViewModel.currentlyPlayingViewModel = self
-        
-        // Cancel any existing fade tasks
-        cancelFades()
-        
-        // Fade in audio
-        do {
-            try await fadeInAudio()
-        } catch {
-            LoggingService.error("Error during audio fade: \(error)", component: "Player")
-        }
-        
-        // Increment view count
-        do {
-            try await incrementViewCount()
-        } catch {
-            LoggingService.error("Failed to increment view count: \(error)", component: "PlayerVM")
-        }
+        LoggingService.debug("✅ Player paused and isPlaying set to false for video \(video.id)", component: "PlayerVM")
     }
     
     public func pause() async {

@@ -124,6 +124,17 @@ struct MainTabView: View {
                             Text("Profile")
                         }
                     }
+                    
+                    // NEW TAB: Chat
+                    NavigationView {
+                        ChatView()
+                    }
+                    .tabItem {
+                        VStack {
+                            Image(systemName: "bubble.left.and.bubble.right.fill")
+                            Text("Chat")
+                        }
+                    }
                 }
                 .tint(.blue)
                 .onAppear {
