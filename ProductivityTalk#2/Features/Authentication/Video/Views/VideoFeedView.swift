@@ -9,6 +9,16 @@ struct VideoFeedView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedVideo: Video?
+    @Environment(\.dismiss) private var dismiss
+    
+    // Add initialVideoId parameter
+    let initialVideoId: String?
+    
+    // Default initializer
+    init(initialVideoId: String? = nil) {
+        self.initialVideoId = initialVideoId
+        LoggingService.debug("Initializing VideoFeedView with initialVideoId: \(initialVideoId ?? "nil")", component: "Feed")
+    }
 
     var body: some View {
         VideoFeedScrollView(
@@ -27,9 +37,33 @@ struct VideoFeedView: View {
         .onAppear {
             Task {
                 LoggingService.debug("📱 VideoFeedView appeared, fetching videos", component: "Feed")
+                LoggingService.debug("Current videos count: \(viewModel.videos.count)", component: "Feed")
+                
                 await viewModel.fetchVideos()
-                if let firstVideoId = viewModel.videos.first?.id {
-                    LoggingService.debug("Setting initial scroll position to \(firstVideoId)", component: "Feed")
+                LoggingService.debug("Fetched videos count: \(viewModel.videos.count)", component: "Feed")
+                
+                // If we have an initial video ID, scroll to it
+                if let initialVideoId = initialVideoId {
+                    LoggingService.debug("Attempting to scroll to initial video: \(initialVideoId)", component: "Feed")
+                    // Find the index of the video
+                    if let index = viewModel.videos.firstIndex(where: { $0.id == initialVideoId }) {
+                        LoggingService.debug("Found video at index \(index)", component: "Feed")
+                        await MainActor.run {
+                            scrollPosition = initialVideoId
+                            hasInitializedFirstVideo = true
+                            LoggingService.debug("Set scroll position to \(initialVideoId)", component: "Feed")
+                        }
+                    } else {
+                        LoggingService.error("Could not find video with ID: \(initialVideoId) in \(viewModel.videos.count) videos", component: "Feed")
+                        // Show error to user
+                        viewModel.error = NSError(domain: "VideoFeed", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not find the requested video"])
+                        // Dismiss the sheet after a delay
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            dismiss()
+                        }
+                    }
+                } else if let firstVideoId = viewModel.videos.first?.id {
+                    LoggingService.debug("No initial video ID, setting to first video: \(firstVideoId)", component: "Feed")
                     await MainActor.run {
                         scrollPosition = firstVideoId
                         hasInitializedFirstVideo = true
@@ -64,8 +98,12 @@ struct VideoFeedView: View {
                     // Then play new video
                     if let newPlayer = viewModel.playerViewModels[newId] {
                         LoggingService.debug("Found new player for \(newId), starting playback", component: "Feed")
-                        await newPlayer.play()
-                        LoggingService.debug("Playback started for \(newId)", component: "Feed")
+                        do {
+                            try await newPlayer.play()
+                            LoggingService.debug("Playback started for \(newId)", component: "Feed")
+                        } catch {
+                            LoggingService.error("Failed to start playback for \(newId): \(error)", component: "Feed")
+                        }
                     } else {
                         LoggingService.debug("⚠️ No player found for new video \(newId)", component: "Feed")
                     }
@@ -82,13 +120,21 @@ struct VideoFeedView: View {
         case .active:
             if let videoId = scrollPosition {
                 Task {
-                    await viewModel.playerViewModels[videoId]?.play()
+                    if let player = viewModel.playerViewModels[videoId] {
+                        do {
+                            try await player.play()
+                        } catch {
+                            LoggingService.error("Failed to resume playback after becoming active for \(videoId): \(error)", component: "Feed")
+                        }
+                    }
                 }
             }
         case .inactive, .background:
             if let videoId = scrollPosition {
                 Task {
-                    await viewModel.playerViewModels[videoId]?.pausePlayback()
+                    if let player = viewModel.playerViewModels[videoId] {
+                        await player.pausePlayback()
+                    }
                 }
             }
         @unknown default:

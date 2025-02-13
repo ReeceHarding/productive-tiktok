@@ -61,9 +61,21 @@ public struct VideoPlayerView: View {
                                 .onTapGesture {
                                     Task {
                                         if viewModel.isPlaying {
-                                            await viewModel.pause()
+                                            do {
+                                                try await viewModel.pause()
+                                            } catch {
+                                                LoggingService.error("Failed to pause video: \(error)", component: "Player")
+                                                errorMessage = "Failed to pause video"
+                                                showError = true
+                                            }
                                         } else {
-                                            await viewModel.play()
+                                            do {
+                                                try await viewModel.play()
+                                            } catch {
+                                                LoggingService.error("Failed to play video: \(error)", component: "Player")
+                                                errorMessage = "Failed to play video"
+                                                showError = true
+                                            }
                                         }
                                     }
                                 }
@@ -124,7 +136,13 @@ public struct VideoPlayerView: View {
         .task(id: isVisible) {
             if isVisible && !viewModel.isLoading && shouldAutoPlay {
                 LoggingService.debug("🎬 Auto-playing video \(video.id) as it's visible and allowed", component: "UI")
-                await viewModel.play()
+                do {
+                    try await viewModel.play()
+                } catch {
+                    LoggingService.error("Failed to auto-play video: \(error)", component: "Player")
+                    errorMessage = "Failed to auto-play video"
+                    showError = true
+                }
             }
         }
         .onDisappear {
@@ -141,7 +159,13 @@ public struct VideoPlayerView: View {
             if !isLoading && isVisible {
                 LoggingService.video("Video loaded for \(video.id)", component: "Player")
                 Task {
-                    await viewModel.play()
+                    do {
+                        try await viewModel.play()
+                    } catch {
+                        LoggingService.error("Failed to play video after loading: \(error)", component: "Player")
+                        errorMessage = "Failed to play video"
+                        showError = true
+                    }
                 }
             }
         }

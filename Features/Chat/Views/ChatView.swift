@@ -1,0 +1,5 @@
+#Preview {
+    NavigationView {
+        ChatView()
+    }
+} 

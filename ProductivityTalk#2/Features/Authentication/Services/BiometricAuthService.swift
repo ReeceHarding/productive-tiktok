@@ -57,6 +57,8 @@ class BiometricAuthService {
             return .touchID
         case .faceID:
             return .faceID
+        case .opticID:
+            return .faceID
         @unknown default:
             return .none
         }
