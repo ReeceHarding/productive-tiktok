@@ -305,81 +305,54 @@ public class VideoPlayerViewModel: ObservableObject {
         }
     }
     
-    private func setupPlayer(_ player: AVPlayer) async throws {
-        LoggingService.video("Setting up player for \(video.id)", component: "Player")
+    @MainActor
+    private func setupPlayer(_ newPlayer: AVPlayer) async throws {
+        LoggingService.video("🎥 Setting up player for \(video.id)", component: "Player")
         
-        // Clean up existing player first
-        await cleanup()
-        
-        self.player = player
-        
-        // Configure playback settings
-        player.automaticallyWaitsToMinimizeStalling = false
-        player.currentItem?.preferredForwardBufferDuration = 10
-        
-        // Add time observer for watchTime
-        addTimeObserver(to: player)
-        
-        // Add end of video observer for looping
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(playerItemDidReachEnd),
-            name: .AVPlayerItemDidPlayToEndTime,
-            object: player.currentItem
-        )
-        
-        // Observe buffering state
-        bufferingObserver = player.observe(\.timeControlStatus) { [weak self] player, _ in
-            Task { @MainActor in
-                self?.isBuffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
-            }
+        // Ensure we're not in cleanup
+        guard !isCleaningUp else {
+            throw NSError(domain: "com.producttalk.player", code: -1, userInfo: [NSLocalizedDescriptionKey: "Player is being cleaned up"])
         }
         
-        // Wait for player to be ready before attempting preroll
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let statusObserver = player.observe(\.status) { [weak self] player, _ in
+        // Setup status observation and preroll
+        return try await withCheckedThrowingContinuation { continuation in
+            let observer = newPlayer.currentItem?.observe(\.status) { [weak self] item, _ in
                 guard let self = self else { return }
-                Task { @MainActor in
-                    switch player.status {
-                    case .failed:
-                        self.error = player.error?.localizedDescription
-                        LoggingService.error("Player failed for \(self.video.id): \(player.error?.localizedDescription ?? "Unknown error")", component: "Player")
-                        continuation.resume(throwing: player.error ?? NSError(domain: "AVPlayer", code: -1))
-                    case .readyToPlay:
-                        LoggingService.video("Player ready for \(self.video.id)", component: "Player")
-                        // Start buffering only when player is ready
-                        Task {
-                            do {
-                                let success = try await player.preroll(atRate: 1.0)
-                                if success {
-                                    LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
-                                    // Initiate autoplay after successful preroll
-                                    LoggingService.debug("▶️ Attempting autoplay for video \(self.video.id)", component: "Player")
-                                    await self.play()
-                                    continuation.resume()
-                                } else {
-                                    LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
-                                    continuation.resume(throwing: NSError(domain: "AVPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Preroll failed"]))
-                                }
-                            } catch {
-                                LoggingService.error("Preroll error for \(self.video.id): \(error)", component: "Player")
+                
+                switch item.status {
+                case .readyToPlay:
+                    Task { @MainActor [weak self] in
+                        guard let self = self else { return }
+                        do {
+                            // Preroll the player
+                            let success = try await newPlayer.preroll(atRate: 1.0)
+                            if success {
+                                LoggingService.video("✅ Successfully prerolled video \(self.video.id)", component: "Player")
+                                self.player = newPlayer
+                                self.isLoading = false
+                                self.setupTimeObserver()
+                                self.setupBufferingObserver()
+                                continuation.resume()
+                            } else {
+                                let error = NSError(domain: "com.producttalk.player", code: -1, userInfo: [NSLocalizedDescriptionKey: "Preroll failed"])
                                 continuation.resume(throwing: error)
                             }
+                        } catch {
+                            continuation.resume(throwing: error)
                         }
-                    default:
-                        break
                     }
+                case .failed:
+                    let error = item.error ?? NSError(domain: "com.producttalk.player", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unknown player error"])
+                    continuation.resume(throwing: error)
+                default:
+                    break
                 }
             }
-            observers.insert(statusObserver)
+            
+            if let observer = observer {
+                observers.insert(observer)
+            }
         }
-        
-        LoggingService.video("✅ Player setup complete for \(video.id)", component: "Player")
-        isLoading = false
-        
-        // Store in preloaded players
-        preloadedPlayers[video.id] = player
-        LoggingService.video("✅ Successfully preloaded video \(video.id)", component: "Player")
     }
     
     private func observePlayerStatus(_ player: AVPlayer) {
@@ -408,28 +381,49 @@ public class VideoPlayerViewModel: ObservableObject {
         observers.insert(statusObserver)
     }
     
-    private func addTimeObserver(to player: AVPlayer) {
-        // Remove existing observer if any
+    @MainActor
+    private func setupTimeObserver() {
+        guard let player = player else { return }
+        
+        // Remove any existing time observer
         if let token = timeObserverToken {
             player.removeTimeObserver(token)
             timeObserverToken = nil
         }
         
-        // Create new observer that fires every 0.5 seconds
-        let interval = CMTimeMakeWithSeconds(0.5, preferredTimescale: 600)
-        let token = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] currentTime in
+        // Add new time observer
+        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] _ in
             guard let self = self else { return }
-            Task { @MainActor in
-                await self.updateWatchTime()
-            }
+            // Update any time-based UI here if needed
         }
-        timeObserverToken = token
     }
     
-    private func updateWatchTime() async {
-        guard !isCleaningUp else { return }
-        // Removed watchTime logging as it was too verbose
-        // We still keep the method for future use if needed
+    @MainActor
+    private func setupBufferingObserver() {
+        guard let player = player else { return }
+        
+        // Remove any existing buffering observer
+        bufferingObserver?.invalidate()
+        
+        // Setup new buffering observer
+        bufferingObserver = player.observe(\.timeControlStatus) { [weak self] player, _ in
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.isBuffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+                
+                // If we're no longer buffering and should be playing, ensure playback continues
+                if !self.isBuffering && self.isPlaying {
+                    player.play()
+                }
+            }
+        }
+        
+        // Configure playback settings
+        player.automaticallyWaitsToMinimizeStalling = false
+        if let currentItem = player.currentItem {
+            currentItem.preferredForwardBufferDuration = 10
+        }
     }
     
     @objc private func playerItemDidReachEnd() {
@@ -584,55 +578,56 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     // MARK: - Enhanced Play Method
+    @MainActor
     public func play() async {
-        LoggingService.debug("🎬 Starting play() for video \(video.id)", component: "PlayerVM")
-        // Initialize player if needed
-        if player == nil || player?.currentItem == nil {
+        LoggingService.video("🎬 Starting play() for video \(video.id)", component: "PlayerVM")
+        
+        // If we don't have a player yet, load the video first
+        if player == nil {
             LoggingService.debug("No player exists, loading video first", component: "PlayerVM")
             await loadVideo()
         }
         
         guard let player = player else {
-            LoggingService.debug("❌ Failed to get player instance for video \(video.id)", component: "PlayerVM")
+            LoggingService.error("No player available for video \(video.id)", component: "PlayerVM")
             return
         }
         
+        // Set initial volume
         LoggingService.debug("Setting initial volume to 1.0 for video \(video.id)", component: "PlayerVM")
-        // Ensure volume is set to 1.0 initially
         player.volume = 1.0
         
         // Start playback
         LoggingService.debug("🔊 Starting playback for video \(video.id)", component: "PlayerVM")
-        player.play()
-        isPlaying = true
-        
-        // Check if another video is currently playing
-        if let currentPlaying = VideoPlayerViewModel.currentlyPlayingViewModel,
-           currentPlaying !== self {
-            LoggingService.debug("⚠️ Found another playing video (\(currentPlaying.video.id)), cleaning up", component: "PlayerVM")
-            await currentPlaying.cleanup()
-        }
-        
-        VideoPlayerViewModel.currentlyPlayingViewModel = self
         
         // Cancel any existing fade tasks
         LoggingService.debug("Cancelling any existing fade tasks for video \(video.id)", component: "PlayerVM")
-        cancelFades()
+        fadeTask?.cancel()
+        fadeTask = nil
         
-        // Fade in audio
-        do {
-            LoggingService.debug("Starting audio fade in for video \(video.id)", component: "PlayerVM")
-            try await fadeInAudio()
-            LoggingService.debug("✅ Audio fade in complete for video \(video.id)", component: "PlayerVM")
-        } catch {
-            LoggingService.error("Error during audio fade: \(error)", component: "PlayerVM")
+        // Start audio fade in
+        LoggingService.debug("Starting audio fade in for video \(video.id)", component: "PlayerVM")
+        player.play()
+        isPlaying = true
+        
+        // Store as currently playing video
+        if VideoPlayerViewModel.currentlyPlayingViewModel !== self {
+            await VideoPlayerViewModel.currentlyPlayingViewModel?.pausePlayback()
+            VideoPlayerViewModel.currentlyPlayingViewModel = self
         }
         
-        // Increment view count
-        do {
-            try await incrementViewCount()
-        } catch {
-            LoggingService.error("Failed to increment view count: \(error)", component: "PlayerVM")
+        // Update video data
+        Task {
+            do {
+                let data: [String: Any] = [
+                    "lastWatched": FieldValue.serverTimestamp(),
+                    "watchCount": FieldValue.increment(Int64(1))
+                ]
+                try await updateVideoData(videoId: video.id, data: data)
+                LoggingService.debug("✅ Successfully updated video data for \(video.id)", component: "PlayerVM")
+            } catch {
+                LoggingService.error("Failed to update video data: \(error.localizedDescription)", component: "PlayerVM")
+            }
         }
     }
     

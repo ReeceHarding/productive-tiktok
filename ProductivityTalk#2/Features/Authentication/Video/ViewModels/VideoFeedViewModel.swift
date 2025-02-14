@@ -40,7 +40,7 @@ public class VideoFeedViewModel: ObservableObject {
     
     func fetchVideos() async {
         guard !isFetching else {
-            LoggingService.error("Already fetching videos", component: "Feed")
+            LoggingService.error("🚫 Fetch already in progress", component: "Feed")
             return
         }
         
@@ -48,7 +48,7 @@ public class VideoFeedViewModel: ObservableObject {
         isLoading = true
         error = nil
         
-        LoggingService.video("Fetching initial batch of videos", component: "Feed")
+        LoggingService.video("🎥 Initiating video feed fetch", component: "Feed")
         
         do {
             let query = firestore.collection("videos")
@@ -56,31 +56,35 @@ public class VideoFeedViewModel: ObservableObject {
                 .limit(to: batchSize)
             
             let snapshot = try await query.getDocuments()
+            LoggingService.debug("📄 Retrieved \(snapshot.documents.count) documents", component: "Feed")
+            
             var fetchedVideos: [Video] = []
             
             for document in snapshot.documents {
-                LoggingService.debug("Processing document with ID: \(document.documentID)", component: "Feed")
+                LoggingService.debug("🔍 Processing document: \(document.documentID)", component: "Feed")
                 if let video = Video(document: document),
                    video.processingStatus == .ready,
                    !video.videoURL.isEmpty {
-                    LoggingService.debug("Adding ready video: \(video.id)", component: "Feed")
+                    LoggingService.debug("✅ Adding ready video: \(video.id) to feed", component: "Feed")
                     fetchedVideos.append(video)
                     subscribeToUpdates(for: video)
-                    // Create player view model if not already created
+                    
                     if playerViewModels[video.id] == nil {
+                        LoggingService.debug("🎮 Creating new player view model for video \(video.id)", component: "Feed")
                         playerViewModels[video.id] = VideoPlayerViewModel(video: video)
                     }
                 } else {
-                    LoggingService.debug("Skipping video \(document.documentID) - Not ready or no URL", component: "Feed")
+                    LoggingService.debug("⏳ Skipping video \(document.documentID) - Status: \(Video(document: document)?.processingStatus.rawValue ?? "unknown")", component: "Feed")
                 }
             }
             
-            LoggingService.success("Fetched \(fetchedVideos.count) ready videos", component: "Feed")
+            LoggingService.success("✨ Successfully fetched \(fetchedVideos.count) ready videos", component: "Feed")
             self.videos = fetchedVideos
             self.lastDocument = snapshot.documents.last
             
-            // Preload the first two videos to improve initial scroll performance
+            // Preload optimization
             if !fetchedVideos.isEmpty {
+                LoggingService.debug("🔄 Starting preload for initial videos", component: "Feed")
                 await preloadVideo(at: 0)
                 if fetchedVideos.count > 1 {
                     await preloadVideo(at: 1)
@@ -88,7 +92,7 @@ public class VideoFeedViewModel: ObservableObject {
             }
             
         } catch {
-            LoggingService.error("Error fetching videos: \(error)", component: "Feed")
+            LoggingService.error("❌ Failed to fetch videos: \(error)", component: "Feed")
             self.error = error
         }
         
@@ -142,12 +146,12 @@ public class VideoFeedViewModel: ObservableObject {
     }
     
     private func subscribeToUpdates(for video: Video) {
-        // Avoid duplicate listener for the same video
         if videoListeners[video.id] != nil {
-            LoggingService.debug("Listener already exists for video \(video.id)", component: "Feed")
+            LoggingService.debug("🔄 Listener already exists for video \(video.id)", component: "Feed")
             return
         }
         
+        LoggingService.debug("👂 Setting up new listener for video \(video.id)", component: "Feed")
         let docRef = firestore.collection("videos").document(video.id)
         let listener = docRef.addSnapshotListener { [weak self] snapshot, error in
             guard let self = self else { return }

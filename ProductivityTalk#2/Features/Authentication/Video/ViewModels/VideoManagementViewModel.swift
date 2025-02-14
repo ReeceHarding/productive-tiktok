@@ -1,9 +1,10 @@
 import Foundation
 import FirebaseFirestore
+import FirebaseStorage
 import SwiftUI
 
 @MainActor
-final class VideoManagementViewModel: ObservableObject {
+class VideoManagementViewModel: ObservableObject {
     // MARK: - Published Properties
     @Published private(set) var videos: [Video] = []
     @Published private(set) var isLoading = false
@@ -40,137 +41,95 @@ final class VideoManagementViewModel: ObservableObject {
     // MARK: - Public Methods
     func loadVideos() async {
         guard let userId = AuthenticationManager.shared.currentUser?.uid else {
-            LoggingService.error("No authenticated user found", component: "Management")
-            error = "Please sign in to view your videos"
+            LoggingService.error("No authenticated user", component: "Management")
+            error = "No authenticated user"
             return
         }
         
         isLoading = true
-        error = nil
+        LoggingService.video("Loading videos for user \(userId)", component: "Management")
         
         do {
-            LoggingService.video("Loading videos for user: \(userId)", component: "Management")
-            
-            // Query user's videos collection
-            let userVideosRef = firestore.collection("users")
+            // Get user's video references
+            let userVideosSnapshot = try await firestore
+                .collection("users")
                 .document(userId)
                 .collection("videos")
                 .order(by: "createdAt", descending: true)
+                .getDocuments()
             
-            let userVideosSnapshot = try await userVideosRef.getDocuments()
-            let videoIds = userVideosSnapshot.documents.compactMap { doc -> String? in
-                return doc.data()["videoId"] as? String
-            }
+            LoggingService.debug("Found \(userVideosSnapshot.documents.count) video references", component: "Management")
             
-            LoggingService.debug("Found \(videoIds.count) video references", component: "Management")
+            // Remove existing listeners
+            videoListeners.values.forEach { $0.remove() }
+            videoListeners.removeAll()
             
-            // Fetch actual video documents
-            var fetchedVideos: [Video] = []
-            for videoId in videoIds {
-                let videoDoc = try await firestore.collection("videos")
-                    .document(videoId)
-                    .getDocument()
+            // Fetch each video document and set up listeners
+            var loadedVideos: [Video] = []
+            for document in userVideosSnapshot.documents {
+                guard let videoId = document.data()["videoId"] as? String else { continue }
                 
+                // Get the video document
+                let videoDoc = try await firestore.collection("videos").document(videoId).getDocument()
                 if let video = Video(document: videoDoc) {
-                    fetchedVideos.append(video)
-                    subscribeToUpdates(for: video)
+                    loadedVideos.append(video)
+                    setupVideoListener(videoId: videoId)
                 }
             }
             
-            LoggingService.success("Successfully loaded \(fetchedVideos.count) videos", component: "Management")
+            LoggingService.success("Loaded \(loadedVideos.count) videos", component: "Management")
             
             // Update videos and calculate statistics
-            self.videos = fetchedVideos
+            self.videos = loadedVideos
             updateStatistics()
             
         } catch {
-            LoggingService.error("Failed to load videos: \(error)", component: "Management")
+            LoggingService.error("Failed to load videos: \(error.localizedDescription)", component: "Management")
             self.error = "Failed to load videos: \(error.localizedDescription)"
         }
         
         isLoading = false
     }
     
-    func deleteVideo(_ video: Video) async {
-        guard let userId = AuthenticationManager.shared.currentUser?.uid else {
-            LoggingService.error("No authenticated user found", component: "Management")
-            error = "Please sign in to delete videos"
-            return
-        }
+    private func setupVideoListener(videoId: String) {
+        LoggingService.debug("Setting up listener for video \(videoId)", component: "Management")
         
-        do {
-            LoggingService.video("Deleting video: \(video.id)", component: "Management")
-            
-            // Start a batch write
-            let batch = firestore.batch()
-            
-            // Delete video document
-            let videoRef = firestore.collection("videos").document(video.id)
-            batch.deleteDocument(videoRef)
-            
-            // Delete user-video relationship
-            let userVideoRef = firestore.collection("users")
-                .document(userId)
-                .collection("videos")
-                .document(video.id)
-            batch.deleteDocument(userVideoRef)
-            
-            // Commit the batch
-            try await batch.commit()
-            
-            // Update local state
-            if let index = videos.firstIndex(where: { $0.id == video.id }) {
-                videos.remove(at: index)
-                updateStatistics()
-            }
-            
-            LoggingService.success("Successfully deleted video: \(video.id)", component: "Management")
-            
-        } catch {
-            LoggingService.error("Failed to delete video: \(error)", component: "Management")
-            self.error = "Failed to delete video: \(error.localizedDescription)"
-        }
-    }
-    
-    // MARK: - Private Methods
-    private func subscribeToUpdates(for video: Video) {
-        // Remove existing listener if any
-        videoListeners[video.id]?.remove()
-        
-        let listener = firestore.collection("videos")
-            .document(video.id)
+        let listener = firestore.collection("videos").document(videoId)
             .addSnapshotListener { [weak self] snapshot, error in
                 guard let self = self else { return }
                 
                 if let error = error {
-                    LoggingService.error("Error listening to video updates: \(error)", component: "Management")
+                    LoggingService.error("Video listener error: \(error.localizedDescription)", component: "Management")
                     return
                 }
                 
                 guard let snapshot = snapshot,
-                      snapshot.exists,
                       let updatedVideo = Video(document: snapshot) else {
+                    LoggingService.error("Invalid video snapshot for \(videoId)", component: "Management")
                     return
                 }
                 
-                if let index = self.videos.firstIndex(where: { $0.id == video.id }) {
+                // Update video in array
+                if let index = self.videos.firstIndex(where: { $0.id == videoId }) {
+                    LoggingService.debug("Updating video \(videoId) - Status: \(updatedVideo.processingStatus.rawValue)", component: "Management")
                     self.videos[index] = updatedVideo
                     self.updateStatistics()
                 }
             }
         
-        videoListeners[video.id] = listener
-        LoggingService.debug("Subscribed to updates for video: \(video.id)", component: "Management")
+        videoListeners[videoId] = listener
     }
     
     private func updateStatistics() {
         var stats = VideoStatistics()
         
-        stats.totalVideos = videos.count
-        stats.totalViews = videos.reduce(0) { $0 + $1.viewCount }
-        stats.totalLikes = videos.reduce(0) { $0 + $1.likeCount }
-        stats.totalComments = videos.reduce(0) { $0 + $1.commentCount }
-        stats.totalSaves = videos.reduce(0) { $0 + $1.saveCount }
+        for video in videos {
+            stats.totalVideos += 1
+            stats.totalViews += video.viewCount
+            stats.totalLikes += video.likeCount
+            stats.totalComments += video.commentCount
+            stats.totalSaves += video.saveCount
+        }
         
         // Calculate engagement rate
         if stats.totalViews > 0 {
@@ -178,7 +137,59 @@ final class VideoManagementViewModel: ObservableObject {
             stats.engagementRate = totalEngagements / Double(stats.totalViews)
         }
         
-        statistics = stats
-        LoggingService.debug("Updated video statistics", component: "Management")
+        LoggingService.debug("""
+            Updated statistics:
+            - Total Videos: \(stats.totalVideos)
+            - Total Views: \(stats.totalViews)
+            - Total Likes: \(stats.totalLikes)
+            - Total Comments: \(stats.totalComments)
+            - Total Saves: \(stats.totalSaves)
+            - Engagement Rate: \(String(format: "%.2f%%", stats.engagementRate * 100))
+            """, component: "Management")
+        
+        self.statistics = stats
+    }
+    
+    func deleteVideo(_ video: Video) async {
+        guard let userId = AuthenticationManager.shared.currentUser?.uid else {
+            LoggingService.error("No authenticated user", component: "Management")
+            error = "No authenticated user"
+            return
+        }
+        
+        LoggingService.video("Deleting video \(video.id)", component: "Management")
+        
+        do {
+            // Remove from Firestore
+            try await firestore.collection("videos").document(video.id).delete()
+            try await firestore
+                .collection("users")
+                .document(userId)
+                .collection("videos")
+                .document(video.id)
+                .delete()
+            
+            // Remove from Storage if URL exists
+            if !video.videoURL.isEmpty {
+                let storage = Storage.storage()
+                if let url = URL(string: video.videoURL),
+                   let path = url.path.components(separatedBy: "/o/").last?.removingPercentEncoding {
+                    try await storage.reference().child(path).delete()
+                }
+            }
+            
+            // Remove listener
+            videoListeners[video.id]?.remove()
+            videoListeners.removeValue(forKey: video.id)
+            
+            // Update local state
+            videos.removeAll { $0.id == video.id }
+            updateStatistics()
+            
+            LoggingService.success("Successfully deleted video \(video.id)", component: "Management")
+        } catch {
+            LoggingService.error("Failed to delete video: \(error.localizedDescription)", component: "Management")
+            self.error = "Failed to delete video: \(error.localizedDescription)"
+        }
     }
 } 

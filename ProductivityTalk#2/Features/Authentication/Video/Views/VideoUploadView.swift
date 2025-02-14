@@ -31,8 +31,6 @@ struct VideoUploadView: View {
                     }
                     // Upload Section
                     uploadSection
-                    // Previously uploaded videos
-                    uploadedVideosList
                 }
                 .padding(.vertical)
             }
@@ -173,47 +171,6 @@ struct VideoUploadView: View {
         }
         .padding(.top, 16)
     }
-
-    private var uploadedVideosList: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Your Uploaded Videos")
-                    .font(.title3)
-                    .bold()
-                Spacer()
-                Text("\(managementViewModel.videos.count)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 16)
-            
-            if managementViewModel.isLoading {
-                LoadingAnimation(message: "Loading videos...")
-                    .padding()
-            } else if managementViewModel.videos.isEmpty {
-                Text("No videos uploaded yet.")
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-            } else {
-                VStack(spacing: 16) {
-                    ForEach(managementViewModel.videos, id: \.id) { video in
-                        VideoRow(
-                            video: video,
-                            onDelete: { Task { await managementViewModel.deleteVideo(video) } }
-                        )
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(uiColor: .systemBackground).opacity(0.8))
-                        )
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-        }
-        .padding(.top, 20)
-        .padding(.bottom, 32)
-    }
 }
 
 extension VideoUploadView {
@@ -253,27 +210,28 @@ extension VideoUploadView {
 
         var body: some View {
             VStack(spacing: 12) {
+                // Header
                 HStack(spacing: 16) {
-                    // no thumbnail for now
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color.gray.opacity(0.3))
                             .frame(width: 60, height: 60)
 
-                        Image(systemName: "video.fill")
-                            .foregroundColor(.gray)
+                        Image(systemName: statusIcon)
+                            .foregroundColor(statusColor)
+                            .font(.system(size: 24))
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Video \(fileId.prefix(8))")
-                            .font(.subheadline)
+                            .font(.headline)
                             .foregroundColor(.primary)
 
                         HStack(spacing: 4) {
                             Image(systemName: statusIcon)
                                 .foregroundColor(statusColor)
                             Text(state.statusMessage)
-                                .font(.caption)
+                                .font(.subheadline)
                                 .foregroundColor(statusColor)
                         }
 
@@ -305,56 +263,72 @@ extension VideoUploadView {
                                 LoadingAnimation(message: nil)
                                     .frame(width: 24, height: 24)
                                 Text(processingStageMessage)
-                                    .font(.caption)
+                                    .font(.subheadline)
                                     .foregroundColor(.secondary)
                             }
                             .padding(.top, 4)
                         }
                         
-                        // Transcript
-                        if let transcript = state.transcript,
-                           state.processingStatus == .extractingQuotes
-                           || state.processingStatus == .generatingMetadata
-                           || state.processingStatus == .ready {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Generated Transcript")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                Text(transcript)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(3)
-                            }
-                            .padding(.vertical, 4)
+                        // Processing Timeline
+                        VStack(alignment: .leading, spacing: 12) {
+                            TimelineStage(
+                                icon: "arrow.up.circle.fill",
+                                title: "Upload",
+                                subtitle: "Uploading video to server",
+                                isComplete: state.processingStatus != .uploading,
+                                isCurrent: state.processingStatus == .uploading
+                            )
+                            
+                            TimelineStage(
+                                icon: "text.bubble.fill",
+                                title: "Transcription",
+                                subtitle: "Generating transcript with Whisper AI",
+                                isComplete: state.processingStatus != .transcribing && state.transcript != nil,
+                                isCurrent: state.processingStatus == .transcribing
+                            )
+                            
+                            TimelineStage(
+                                icon: "quote.bubble.fill",
+                                title: "Quote Extraction",
+                                subtitle: "Extracting meaningful quotes with GPT-4",
+                                isComplete: state.processingStatus != .extractingQuotes && state.quotes != nil,
+                                isCurrent: state.processingStatus == .extractingQuotes
+                            )
+                            
+                            TimelineStage(
+                                icon: "tag.fill",
+                                title: "Metadata Generation",
+                                subtitle: "Generating title, description, and tags",
+                                isComplete: state.processingStatus == .ready,
+                                isCurrent: state.processingStatus == .generatingMetadata
+                            )
+                        }
+                        .padding(.vertical, 8)
+                        
+                        // Generated Content
+                        if let transcript = state.transcript {
+                            ContentSection(
+                                title: "Generated Transcript",
+                                content: transcript,
+                                maxLines: 3
+                            )
                         }
                         
-                        // Quotes
-                        if let quotes = state.quotes, !quotes.isEmpty {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Extracted Quotes")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                ForEach(quotes.prefix(3), id: \.self) { quote in
-                                    Text("• \(quote)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                if quotes.count > 3 {
-                                    Text("+ \(quotes.count - 3) more quotes")
-                                        .font(.caption)
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                            .padding(.vertical, 4)
+                        if let quotes = state.quotes {
+                            ContentSection(
+                                title: "Extracted Quotes",
+                                content: quotes.joined(separator: "\n• "),
+                                prefix: "• ",
+                                maxLines: 4
+                            )
                         }
                     }
                     .padding(.horizontal)
-                    .padding(.top, 4)
                 }
                 
                 if state.processingStatus == .error {
                     Text("Upload failed. Please try again.")
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundColor(.red)
                         .padding(.horizontal)
                 }
@@ -421,139 +395,58 @@ extension VideoUploadView {
         }
     }
 
-    private struct VideoRow: View {
-        let video: Video
-        let onDelete: () -> Void
-
-        @State private var showComments = false
-
+    private struct TimelineStage: View {
+        let icon: String
+        let title: String
+        let subtitle: String
+        let isComplete: Bool
+        let isCurrent: Bool
+        
         var body: some View {
-            VStack(alignment: .leading, spacing: 8) {
-                // Row top
-                HStack(alignment: .center, spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.3))
-                            .frame(width: 80, height: 80)
-                        Image(systemName: "video.fill")
-                            .foregroundColor(.gray)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(video.title.isEmpty ? "Untitled" : video.title)
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
-
-                        HStack {
-                            Circle()
-                                .fill(statusColor)
-                                .frame(width: 8, height: 8)
-                            Text(statusText)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    Spacer()
-                }
-                .padding(.vertical, 8)
-
-                HStack(spacing: 12) {
-                    StatLabel(count: video.viewCount, icon: "eye.fill", label: "Views")
-                    StatLabel(count: video.likeCount, icon: "hand.thumbsup.fill", label: "Likes")
-                    StatLabel(count: video.commentCount, icon: "text.bubble.fill", label: "Comments")
-                    StatLabel(count: video.saveCount, icon: "bookmark.fill", label: "Saves")
-                }
-                .padding(.horizontal, 12)
-
-                if video.viewCount > 0 {
-                    Text("Engagement Rate: \(engagementRate)%")
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .foregroundColor(isComplete ? .green : (isCurrent ? .blue : .gray))
+                    .font(.system(size: 18))
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                        .padding(.horizontal, 12)
                 }
-
-                HStack(spacing: 16) {
-                    Button(action: { showComments = true }) {
-                        Label("View Comments", systemImage: "text.bubble")
-                            .font(.subheadline)
-                    }
-                    Spacer()
-                    Button(role: .destructive, action: onDelete) {
-                        Label("Delete", systemImage: "trash")
-                            .font(.subheadline)
-                            .foregroundColor(.red)
-                    }
+                
+                Spacer()
+                
+                if isComplete {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                } else if isCurrent {
+                    LoadingAnimation(message: nil)
+                        .frame(width: 20, height: 20)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
-            .sheet(isPresented: $showComments) {
-                CommentsView(video: video)
-            }
-        }
-        
-        private var statusColor: Color {
-            switch video.processingStatus {
-            case .uploading, .transcribing, .extractingQuotes, .generatingMetadata, .processing:
-                return .orange
-            case .ready:
-                return .green
-            case .error:
-                return .red
-            }
-        }
-        
-        private var statusText: String {
-            switch video.processingStatus {
-            case .uploading:
-                return "Uploading..."
-            case .transcribing:
-                return "Transcribing..."
-            case .extractingQuotes:
-                return "Extracting Quotes..."
-            case .generatingMetadata:
-                return "Generating Metadata..."
-            case .processing:
-                return "Processing..."
-            case .ready:
-                return "Ready"
-            case .error:
-                return "Error"
-            }
-        }
-        
-        private var engagementRate: String {
-            let totalEngagements = video.likeCount + video.commentCount + video.saveCount
-            let rate = Double(totalEngagements) / Double(max(1, video.viewCount)) * 100
-            return String(format: "%.1f", rate)
         }
     }
     
-    private struct StatLabel: View {
-        let count: Int
-        let icon: String
-        let label: String
-        
-        @State private var showTooltip = false
+    private struct ContentSection: View {
+        let title: String
+        let content: String
+        var prefix: String = ""
+        var maxLines: Int = 3
         
         var body: some View {
-            Label("\(count)", systemImage: icon)
-                .font(.footnote)
-                .foregroundColor(.secondary)
-                .onTapGesture {
-                    showTooltip.toggle()
-                }
-                .popover(isPresented: $showTooltip) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(label)
-                            .font(.headline)
-                        Text("Total \(label.lowercased()): \(count)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
-                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text(prefix + content)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(maxLines)
+            }
+            .padding(.vertical, 4)
         }
     }
 }

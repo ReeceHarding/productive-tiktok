@@ -31,58 +31,45 @@ exports.processVideo = onObjectFinalized({
 }, async (event) => {
   const filePath = event.data.name;
   const fileName = path.basename(filePath);
-  
-  // Only process videos in the videos/ folder
-  if (!filePath.startsWith("videos/")) {
-    console.log("Not a video upload, skipping processing");
-    return;
-  }
-  
-  // Extract videoId from the filename (remove .mp4 extension)
   const videoId = path.basename(fileName, ".mp4");
-  console.log(`Starting cloud function processing for video with ID: ${videoId}`);
+  
+  console.log(`🎥 Starting video processing pipeline
+    File: ${filePath}
+    Video ID: ${videoId}
+    Bucket: ${event.data.bucket}
+    Time: ${new Date().toISOString()}
+  `);
   
   const bucket = storage.bucket(event.data.bucket);
 
   try {
-    // 1) Mark Firestore doc as uploading (already done in the client)
-    // 2) Generate a signed URL for the video
-    console.log(`Generating signed URL for video: ${filePath}`);
-    const signedUrlConfig = {
+    console.log(`📝 Generating signed URL for video: ${filePath}`);
+    const [signedUrl] = await bucket.file(filePath).getSignedUrl({
       action: "read",
       expires: "03-01-2500",
       version: "v4"
-    };
-    const [signedUrl] = await bucket.file(filePath).getSignedUrl(signedUrlConfig);
-    console.log(`✅ Generated signed URL: ${signedUrl}`);
+    });
+    console.log(`✅ Generated signed URL (truncated): ${signedUrl.substring(0, 50)}...`);
 
-    // 3) Update Firestore with the signed URL
-    await admin
-      .firestore()
-      .collection("videos")
-      .doc(videoId)
-      .update({
-        videoURL: signedUrl,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-    console.log(`✅ Updated Firestore doc with signedURL for video ${videoId}`);
+    // Update Firestore with signed URL
+    await admin.firestore().collection("videos").doc(videoId).update({
+      videoURL: signedUrl,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    console.log(`💾 Updated Firestore with signed URL for video ${videoId}`);
 
-    // 4) Download the video to a temp folder so we can extract the audio
-    console.log("Downloading video locally for audio extraction...");
+    // Download video for processing
+    console.log(`⬇️ Downloading video for processing...`);
     const tempFilePath = path.join(os.tmpdir(), fileName);
     await bucket.file(filePath).download({destination: tempFilePath});
-    console.log("✅ Downloaded video locally:", tempFilePath);
+    console.log(`✅ Downloaded video to: ${tempFilePath}`);
 
-    // *** At this point, we can set 'processingStatus' to 'transcribing' ***
-    await admin
-      .firestore()
-      .collection("videos")
-      .doc(videoId)
-      .update({
-        processingStatus: "transcribing",
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-    console.log(`🔄 Set processingStatus=transcribing for video ${videoId}`);
+    // Status update: transcribing
+    await admin.firestore().collection("videos").doc(videoId).update({
+      processingStatus: "transcribing",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    console.log(`🔄 Status updated to 'transcribing' for video ${videoId}`);
 
     // 5) Extract audio
     const audioPath = path.join(os.tmpdir(), `${videoId}.mp3`);
@@ -195,9 +182,7 @@ exports.processVideo = onObjectFinalized({
           processingStatus: "generating_metadata",
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
-      console.log(
-        `✅ Updated doc with quotes and set status=generating_metadata for video ${videoId}`
-      );
+      console.log(`✅ Updated doc with quotes and set status=generating_metadata for video ${videoId}`);
 
       // 8) Generate additional metadata (title, description, 20 categories/tags).
       console.log("⚙️ Generating additional metadata with GPT-4...");
@@ -287,6 +272,7 @@ exports.processVideo = onObjectFinalized({
         description: autoDescription,
         autoTags,
         tags: autoTags,
+        processingStatus: "ready",
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       };
 
@@ -295,18 +281,7 @@ exports.processVideo = onObjectFinalized({
         .collection("videos")
         .doc(videoId)
         .update(finalUpdateData);
-      console.log(`✅ Stored final metadata for video ${videoId}`);
-
-      // *** Now set status to 'ready' ***
-      await admin
-        .firestore()
-        .collection("videos")
-        .doc(videoId)
-        .update({
-          processingStatus: "ready",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-      console.log(`🎉 processingStatus=ready for video ${videoId}`);
+      console.log(`✅ Stored final metadata and set status=ready for video ${videoId}`);
 
       // Also update secondBrain entries if they exist
       const secondBrainQuery = await admin
@@ -348,23 +323,25 @@ exports.processVideo = onObjectFinalized({
       }
     }
 
-    // Cleanup
+    // Final cleanup
     fs.unlinkSync(tempFilePath);
     fs.unlinkSync(audioPath);
-    console.log("🧹 Cleaned up temporary files locally");
+    console.log(`🧹 Cleaned up temporary files for video ${videoId}`);
+    console.log(`✨ Video processing complete for ${videoId}`);
 
   } catch (error) {
-    console.error("Error processing video:", error);
-    // Mark as error
+    console.error(`❌ Error processing video ${videoId}:`, error);
+    console.error(`Stack trace:`, error.stack);
+    
     try {
       await admin.firestore().collection("videos").doc(videoId).update({
         processingStatus: "error",
         processingError: error.message || "Unknown error occurred",
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
-      console.log(`❌ Marked video ${videoId} as error with message: ${error.message}`);
+      console.log(`⚠️ Marked video ${videoId} as error with message: ${error.message}`);
     } catch (updateError) {
-      console.error("Failed to update video doc after error:", updateError);
+      console.error(`❌ Failed to update error status for video ${videoId}:`, updateError);
     }
   }
 });
