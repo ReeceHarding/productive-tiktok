@@ -74,8 +74,8 @@ class CommentsViewModel: ObservableObject {
             
             // Sort by save:view ratio
             let sortedComments = newComments.sorted { comment1, comment2 in
-                let ratio1 = Double(comment1.saveCount) / Double(max(comment1.viewCount, 1))
-                let ratio2 = Double(comment2.saveCount) / Double(max(comment2.viewCount, 1))
+                let ratio1 = Double(comment1.saveCount)
+                let ratio2 = Double(comment2.saveCount)
                 return ratio1 > ratio2
             }
             
@@ -222,8 +222,8 @@ class CommentsViewModel: ObservableObject {
             
             // Re-sort comments after updating save count
             comments.sort { comment1, comment2 in
-                let ratio1 = Double(comment1.saveCount) / Double(max(comment1.viewCount, 1))
-                let ratio2 = Double(comment2.saveCount) / Double(max(comment2.viewCount, 1))
+                let ratio1 = Double(comment1.saveCount)
+                let ratio2 = Double(comment2.saveCount)
                 return ratio1 > ratio2
             }
             
@@ -240,6 +240,14 @@ class CommentsViewModel: ObservableObject {
     }
     
     // MARK: - Private Methods
+    private func sortComments(_ comments: [Comment]) -> [Comment] {
+        comments.sorted { comment1, comment2 in
+            let ratio1 = Double(comment1.saveCount)
+            let ratio2 = Double(comment2.saveCount)
+            return ratio1 > ratio2
+        }
+    }
+    
     private func setupCommentsListener() {
         LoggingService.debug("🎧 CommentsViewModel: Setting up real-time comments listener", component: "Comments")
         isLoading = true
@@ -270,29 +278,13 @@ class CommentsViewModel: ObservableObject {
                         return nil
                     }
                     
-                    // Increment view count
-                    Task {
-                        do {
-                            try await self.firestore
-                                .collection("videos")
-                                .document(self.video.id)
-                                .collection("comments")
-                                .document(comment.id)
-                                .updateData([
-                                    "viewCount": FieldValue.increment(Int64(1)) as Any
-                                ])
-                            LoggingService.debug("✅ Incremented viewCount for comment: \(comment.id)", component: "Comments")
-                        } catch {
-                            LoggingService.error("Failed to increment viewCount: \(error.localizedDescription)", component: "Comments")
-                        }
-                    }
                     return comment
                 }
                 
                 // Sort by save:view ratio
                 let sortedComments = updatedComments.sorted { c1, c2 in
-                    let ratio1 = Double(c1.saveCount) / Double(max(c1.viewCount, 1))
-                    let ratio2 = Double(c2.saveCount) / Double(max(c2.viewCount, 1))
+                    let ratio1 = Double(c1.saveCount)
+                    let ratio2 = Double(c2.saveCount)
                     return ratio1 > ratio2
                 }
                 

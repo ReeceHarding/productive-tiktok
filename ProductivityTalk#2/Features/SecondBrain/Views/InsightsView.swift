@@ -269,33 +269,19 @@ struct SavedInsightsList: View {
     let onDelete: (String) -> Void
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Saved Insights", systemImage: "bookmark.fill")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                
-                Spacer()
-                
-                Text("\(insights.count) items")
-                    .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.7))
-            }
-            
-            if isLoading {
-                LoadingAnimation(message: "Loading saved insights...")
-                    .frame(maxWidth: .infinity)
-                    .padding()
-            } else if insights.isEmpty {
-                EmptyStateView()
-            } else {
-                LazyVStack(spacing: 16) {
-                    ForEach(insights) { insight in
-                        InsightCard(insight: insight, onDelete: {
-                            onDelete(insight.id)
-                        })
-                        .transition(.opacity)
+        if isLoading {
+            LoadingAnimation(message: "Loading insights...")
+                .frame(maxWidth: .infinity)
+                .padding()
+        } else if insights.isEmpty {
+            Text("No insights saved yet")
+                .foregroundColor(.secondary)
+                .padding()
+        } else {
+            LazyVStack(spacing: 16) {
+                ForEach(insights) { insight in
+                    if !insight.quotes.isEmpty {
+                        InsightCard(insight: insight, onDelete: onDelete)
                     }
                 }
             }
@@ -303,127 +289,49 @@ struct SavedInsightsList: View {
     }
 }
 
-struct EmptyStateView: View {
+struct InsightCard: View {
+    let insight: InsightsViewModel.SavedInsight
+    let onDelete: (String) -> Void
+    
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "brain.head.profile")
-                .font(.system(size: 50))
-                .foregroundColor(.white.opacity(0.7))
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(insight.quotes, id: \.self) { quote in
+                Text(quote)
+                    .font(.body)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.black.opacity(0.7))
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+            }
             
-            Text("No saved insights yet")
-                .font(.headline)
-                .foregroundColor(.white)
+            if let title = insight.videoTitle {
+                Label(title, systemImage: "video.fill")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
             
-            Text("Save insights from videos to build your Second Brain")
-                .font(.subheadline)
-                .foregroundColor(.white.opacity(0.7))
-                .multilineTextAlignment(.center)
+            HStack {
+                Label(insight.category, systemImage: "tag.fill")
+                    .font(.caption)
+                    .foregroundColor(.blue)
+                
+                Spacer()
+                
+                Button(role: .destructive, action: { onDelete(insight.id) }) {
+                    Label("Delete", systemImage: "trash")
+                        .font(.caption)
+                }
+            }
         }
-        .frame(maxWidth: .infinity)
         .padding()
-        .background(Color.black.opacity(0.7))
-        .cornerRadius(16)
+        .background(Color(UIColor.systemBackground).opacity(0.8))
+        .cornerRadius(12)
+        .shadow(radius: 2)
     }
 }
 
 // MARK: - Models
-
-struct InsightCard: View {
-    let insight: InsightsViewModel.SavedInsight
-    let onDelete: () -> Void
-    @State private var showingDetail = false
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Main quote with gradient background
-            if !insight.quotes.isEmpty {
-                Text(insight.quotes[0])
-                    .font(.body)
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        LinearGradient(
-                            gradient: Gradient(colors: [
-                                Color.black.opacity(0.8),
-                                Color.black.opacity(0.6)
-                            ]),
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .cornerRadius(12)
-                
-                if insight.quotes.count > 1 {
-                    Text("+\(insight.quotes.count - 1) more quotes")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-            }
-            
-            // Metadata row
-            HStack(alignment: .center, spacing: 12) {
-                // Video title and category
-                VStack(alignment: .leading, spacing: 4) {
-                    if let title = insight.videoTitle {
-                        Text(title)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                    }
-                    
-                    HStack(spacing: 6) {
-                        Image(systemName: "tag.fill")
-                            .font(.caption)
-                        Text(insight.category)
-                            .font(.caption)
-                    }
-                    .foregroundColor(.gray)
-                }
-                
-                Spacer()
-                
-                // Date
-                Text(insight.savedAt.formatted(date: .numeric, time: .omitted))
-                    .font(.caption)
-                    .foregroundColor(.gray)
-            }
-            
-            // Action buttons
-            HStack(spacing: 12) {
-                Button {
-                    showingDetail = true
-                } label: {
-                    Label("View Details", systemImage: "doc.text.fill")
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.blue.opacity(0.8))
-                        .cornerRadius(8)
-                }
-                
-                Spacer()
-                
-                Button(role: .destructive, action: onDelete) {
-                    Label("Delete", systemImage: "trash")
-                        .font(.subheadline)
-                        .foregroundColor(.red)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.red.opacity(0.2))
-                        .cornerRadius(8)
-                }
-            }
-        }
-        .padding()
-        .background(Color.black.opacity(0.7))
-        .cornerRadius(16)
-        .sheet(isPresented: $showingDetail) {
-            InsightDetailView(insight: insight)
-        }
-    }
-}
 
 struct InsightDetailView: View {
     let insight: InsightsViewModel.SavedInsight

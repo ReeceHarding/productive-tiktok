@@ -45,7 +45,55 @@ exports.processVideo = onObjectFinalized({
   const bucket = storage.bucket(event.data.bucket);
 
   try {
-    // 1) Mark Firestore doc as uploading (already done in the client)
+    // Get the file metadata to find the uploader
+    const [metadata] = await bucket.file(filePath).getMetadata();
+    const userId = metadata.metadata?.userId;
+    
+    if (!userId) {
+      throw new Error("No userId found in file metadata");
+    }
+    
+    // Get the user's data
+    const userDoc = await admin.firestore().collection("users").doc(userId).get();
+    if (!userDoc.exists) {
+      throw new Error("User document not found");
+    }
+    const userData = userDoc.data();
+    
+    // 1) Create initial video document
+    const videoRef = admin.firestore().collection("videos").doc(videoId);
+    const userVideoRef = admin.firestore()
+      .collection("users")
+      .document(userId)
+      .collection("videos")
+      .document(videoId);
+      
+    const batch = admin.firestore().batch();
+    
+    batch.set(videoRef, {
+      id: videoId,
+      ownerId: userId,
+      ownerUsername: userData.username,
+      videoURL: "",
+      thumbnailURL: "",
+      title: "Processing...",
+      description: "Processing...",
+      tags: [],
+      processingStatus: "uploading",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      commentCount: 0,
+      saveCount: 0
+    });
+    
+    batch.set(userVideoRef, {
+      videoId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    await batch.commit();
+    console.log(`✅ Created initial video documents for ${videoId}`);
+
     // 2) Generate a signed URL for the video
     console.log(`Generating signed URL for video: ${filePath}`);
     const signedUrlConfig = {
@@ -57,14 +105,10 @@ exports.processVideo = onObjectFinalized({
     console.log(`✅ Generated signed URL: ${signedUrl}`);
 
     // 3) Update Firestore with the signed URL
-    await admin
-      .firestore()
-      .collection("videos")
-      .doc(videoId)
-      .update({
-        videoURL: signedUrl,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
+    await videoRef.update({
+      videoURL: signedUrl,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
     console.log(`✅ Updated Firestore doc with signedURL for video ${videoId}`);
 
     // 4) Download the video to a temp folder so we can extract the audio
@@ -73,15 +117,11 @@ exports.processVideo = onObjectFinalized({
     await bucket.file(filePath).download({destination: tempFilePath});
     console.log("✅ Downloaded video locally:", tempFilePath);
 
-    // *** At this point, we can set 'processingStatus' to 'transcribing' ***
-    await admin
-      .firestore()
-      .collection("videos")
-      .doc(videoId)
-      .update({
-        processingStatus: "transcribing",
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
+    // Set status to transcribing
+    await videoRef.update({
+      processingStatus: "transcribing",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
     console.log(`🔄 Set processingStatus=transcribing for video ${videoId}`);
 
     // 5) Extract audio
@@ -122,27 +162,13 @@ exports.processVideo = onObjectFinalized({
     const transcriptText = response.data;
     console.log("✅ Transcription completed");
 
-    // Update Firestore with transcript but keep status as transcribing
-    await admin
-      .firestore()
-      .collection("videos")
-      .doc(videoId)
-      .update({
-        transcript: transcriptText,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-    console.log(`✅ Updated doc with transcript for video ${videoId} (still transcribing status)`);
-
-    // *** Next, set 'processingStatus' to 'extracting_quotes' ***
-    await admin
-      .firestore()
-      .collection("videos")
-      .doc(videoId)
-      .update({
-        processingStatus: "extracting_quotes",
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-    console.log(`🔄 Set processingStatus=extracting_quotes for video ${videoId}`);
+    // Update Firestore with transcript
+    await videoRef.update({
+      transcript: transcriptText,
+      processingStatus: "extracting_quotes",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    console.log(`✅ Updated doc with transcript for video ${videoId}`);
 
     // 7) Use GPT-4 to extract quotes
     try {
@@ -179,21 +205,15 @@ exports.processVideo = onObjectFinalized({
       
       console.log("📊 Extracted quotes:", quotes);
 
-      // *** Move to 'processingStatus' = 'generating_metadata' ***
-      await admin
-        .firestore()
-        .collection("videos")
-        .doc(videoId)
-        .update({
-          quotes: quotes,
-          processingStatus: "generating_metadata",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-      console.log(
-        `✅ Updated doc with quotes and set status=generating_metadata for video ${videoId}`
-      );
+      // Update with quotes and move to metadata generation
+      await videoRef.update({
+        quotes: quotes,
+        processingStatus: "generating_metadata",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      console.log(`✅ Updated doc with quotes for video ${videoId}`);
 
-      // 8) Generate additional metadata (title, description, 20 categories/tags).
+      // 8) Generate additional metadata (title, description, 20 categories/tags)
       console.log("⚙️ Generating additional metadata with GPT-4...");
       const [titleRes, descriptionRes, tagsRes] = await Promise.all([
         // Title
@@ -268,41 +288,25 @@ exports.processVideo = onObjectFinalized({
         .map((tag) => tag.trim())
         .filter((tag) => tag);
 
-      // Log and store final data
+      // Store final data
       console.log("✅ Generated metadata from GPT-4");
       console.log("Title:", autoTitle);
       console.log("Description:", autoDescription);
       console.log("Tags:", autoTags);
 
-      const finalUpdateData = {
+      await videoRef.update({
         autoTitle,
         title: autoTitle,
         autoDescription,
         description: autoDescription,
         autoTags,
         tags: autoTags,
+        processingStatus: "ready",
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      };
-
-      await admin
-        .firestore()
-        .collection("videos")
-        .doc(videoId)
-        .update(finalUpdateData);
+      });
       console.log(`✅ Stored final metadata for video ${videoId}`);
 
-      // *** Now set status to 'ready' ***
-      await admin
-        .firestore()
-        .collection("videos")
-        .doc(videoId)
-        .update({
-          processingStatus: "ready",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-      console.log(`🎉 processingStatus=ready for video ${videoId}`);
-
-      // Also update secondBrain entries if they exist
+      // Update secondBrain entries if they exist
       const secondBrainQuery = await admin
         .firestore()
         .collectionGroup("secondBrain")
@@ -324,22 +328,13 @@ exports.processVideo = onObjectFinalized({
 
     } catch (contentErr) {
       console.error("Content generation failed:", contentErr);
-      // If quotes generation fails, set error and include transcript
-      if (
-        contentErr.message.includes("GPT-4") ||
-        contentErr.message.includes("chat/completions")
-      ) {
-        await admin.firestore().collection("videos").doc(videoId).update({
-          processingStatus: "error",
-          processingError: "Failed to generate quotes: " + contentErr.message,
-          transcript: transcriptText,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-        console.log(`Updated video ${videoId} status=error, saved transcript anyway`);
-      } else {
-        // For other errors in metadata generation, continue with ready status
-        console.log(`Continuing with ready status for video ${videoId} despite metadata generation failure`);
-      }
+      await videoRef.update({
+        processingStatus: "error",
+        processingError: "Failed to generate content: " + contentErr.message,
+        transcript: transcriptText,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      console.log(`❌ Updated video ${videoId} status=error`);
     }
 
     // Cleanup
@@ -349,7 +344,7 @@ exports.processVideo = onObjectFinalized({
 
   } catch (error) {
     console.error("Error processing video:", error);
-    // Mark as error
+    // Mark as error in Firestore
     try {
       await admin.firestore().collection("videos").doc(videoId).update({
         processingStatus: "error",

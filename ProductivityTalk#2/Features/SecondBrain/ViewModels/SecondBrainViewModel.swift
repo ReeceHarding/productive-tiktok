@@ -62,9 +62,6 @@ class SecondBrainViewModel: ObservableObject {
             
             // Calculate aggregated fields
             let totalVideos = videosSnapshot.documents.count
-            let totalViews = videosSnapshot.documents.reduce(0) {
-                $0 + ( ($1.data()["viewCount"] as? Int) ?? 0 )
-            }
             let totalLikes = videosSnapshot.documents.reduce(0) {
                 $0 + ( ($1.data()["likeCount"] as? Int) ?? 0 )
             }
@@ -85,9 +82,9 @@ class SecondBrainViewModel: ObservableObject {
                 $0 + ( ($1.data()["brainCount"] as? Int) ?? 0 )
             }
             
-            // Engagement Rates
-            let videoEngagementRate: Double = (totalViews > 0)
-              ? Double(totalLikes + totalShares + totalSaves) / Double(totalViews)
+            // Engagement Rates - now calculated per video instead of views
+            let videoEngagementRate: Double = (totalVideos > 0)
+              ? Double(totalLikes + totalShares + totalSaves) / Double(totalVideos)
               : 0.0
             let commentEngagementRate: Double = (totalComments > 0)
               ? Double(totalBrainSaves) / Double(totalComments)
@@ -97,7 +94,6 @@ class SecondBrainViewModel: ObservableObject {
             let userRef = db.collection("users").document(userId)
             try await userRef.setData([
                 "totalVideosUploaded": totalVideos,
-                "totalVideoViews": totalViews,
                 "totalVideoLikes": totalLikes,
                 "totalVideoShares": totalShares,
                 "totalVideoSaves": totalSaves,

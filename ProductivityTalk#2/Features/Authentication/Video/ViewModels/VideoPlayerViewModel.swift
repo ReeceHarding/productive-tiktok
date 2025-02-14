@@ -274,7 +274,7 @@ public class VideoPlayerViewModel: ObservableObject {
             
             let player = AVPlayer(playerItem: playerItem)
             
-            await Task { [weak self] in
+            try await Task { [weak self] in
                 guard let self = self else { return }
                 do {
                     try await self.setupPlayer(player)
@@ -373,12 +373,15 @@ public class VideoPlayerViewModel: ObservableObject {
                 case .readyToPlay:
                     LoggingService.video("Player ready for \(self.video.id)", component: "Player")
                     // Start buffering only when player is ready
-                    if let success = try? await player.preroll(atRate: 1.0) {
+                    do {
+                        let success = try await player.preroll(atRate: 1.0)
                         if success {
                             LoggingService.video("Preroll complete for \(self.video.id)", component: "Player")
                         } else {
                             LoggingService.error("Preroll failed for \(self.video.id)", component: "Player")
                         }
+                    } catch {
+                        LoggingService.error("Preroll error for \(self.video.id): \(error)", component: "Player")
                     }
                 default:
                     break
@@ -581,13 +584,6 @@ public class VideoPlayerViewModel: ObservableObject {
         } catch {
             LoggingService.error("Error during audio fade: \(error)", component: "Player")
         }
-        
-        // Increment view count
-        do {
-            try await incrementViewCount()
-        } catch {
-            LoggingService.error("Failed to increment view count: \(error)", component: "PlayerVM")
-        }
     }
     
     public func pause() async {
@@ -784,13 +780,6 @@ public class VideoPlayerViewModel: ObservableObject {
     private func handlePlaybackError(_ error: Error) {
         LoggingService.error("Playback error for video \(video.id): \(error.localizedDescription)", component: "Player")
         self.error = error.localizedDescription
-    }
-    
-    private func incrementViewCount() async throws {
-        let data: [String: Any] = [
-            "viewCount": video.viewCount + 1
-        ]
-        try await updateVideoStats(data: data)
     }
     
     // MARK: - Notification Methods

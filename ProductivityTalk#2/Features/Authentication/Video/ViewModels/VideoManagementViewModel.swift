@@ -18,7 +18,6 @@ final class VideoManagementViewModel: ObservableObject {
     
     struct VideoStatistics {
         var totalVideos: Int = 0
-        var totalViews: Int = 0
         var totalLikes: Int = 0
         var totalComments: Int = 0
         var totalSaves: Int = 0
@@ -167,15 +166,14 @@ final class VideoManagementViewModel: ObservableObject {
         var stats = VideoStatistics()
         
         stats.totalVideos = videos.count
-        stats.totalViews = videos.reduce(0) { $0 + $1.viewCount }
-        stats.totalLikes = videos.reduce(0) { $0 + $1.likeCount }
-        stats.totalComments = videos.reduce(0) { $0 + $1.commentCount }
-        stats.totalSaves = videos.reduce(0) { $0 + $1.saveCount }
+        stats.totalLikes = videos.reduce(into: 0) { $0 += $1.likeCount }
+        stats.totalComments = videos.reduce(into: 0) { $0 += $1.commentCount }
+        stats.totalSaves = videos.reduce(into: 0) { $0 += $1.saveCount }
         
-        // Calculate engagement rate
-        if stats.totalViews > 0 {
+        // Calculate engagement rate based on total possible engagements
+        if stats.totalVideos > 0 {
             let totalEngagements = Double(stats.totalLikes + stats.totalComments + stats.totalSaves)
-            stats.engagementRate = totalEngagements / Double(stats.totalViews)
+            stats.engagementRate = totalEngagements / Double(stats.totalVideos)
         }
         
         statistics = stats

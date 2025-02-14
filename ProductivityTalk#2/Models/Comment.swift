@@ -11,7 +11,6 @@ struct Comment: Identifiable, Codable {
     var userProfileImageURL: String?
     var isInSecondBrain: Bool
     var saveCount: Int
-    var viewCount: Int
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -23,7 +22,6 @@ struct Comment: Identifiable, Codable {
         case userProfileImageURL
         case isInSecondBrain
         case saveCount
-        case viewCount
     }
     
     init(id: String = UUID().uuidString,
@@ -34,8 +32,7 @@ struct Comment: Identifiable, Codable {
          userName: String? = nil,
          userProfileImageURL: String? = nil,
          isInSecondBrain: Bool = false,
-         saveCount: Int = 0,
-         viewCount: Int = 0) {
+         saveCount: Int = 0) {
         self.id = id
         self.videoId = videoId
         self.userId = userId
@@ -45,7 +42,6 @@ struct Comment: Identifiable, Codable {
         self.userProfileImageURL = userProfileImageURL
         self.isInSecondBrain = isInSecondBrain
         self.saveCount = saveCount
-        self.viewCount = viewCount
     }
     
     init?(document: QueryDocumentSnapshot) {
@@ -68,7 +64,6 @@ struct Comment: Identifiable, Codable {
         self.userProfileImageURL = data["userProfileImageURL"] as? String
         self.isInSecondBrain = data["isInSecondBrain"] as? Bool ?? false
         self.saveCount = data["saveCount"] as? Int ?? 0
-        self.viewCount = data["viewCount"] as? Int ?? 0
         
         print("✅ Comment: Successfully parsed comment with ID: \(self.id)")
     }
@@ -80,8 +75,7 @@ struct Comment: Identifiable, Codable {
             "text": text,
             "timestamp": Timestamp(date: timestamp),
             "isInSecondBrain": isInSecondBrain,
-            "saveCount": saveCount,
-            "viewCount": viewCount
+            "saveCount": saveCount
         ]
         
         if let userName = userName {

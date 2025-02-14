@@ -14,7 +14,7 @@ actor VideoProcessingService {
     func processAndUploadVideo(
         sourceURL: URL,
         onProgress: ((Double) -> Void)? = nil
-    ) async throws -> (videoURL: String, thumbnailURL: String) {
+    ) async throws -> String {  // Now only returns the video ID
         LoggingService.video("🎬 Starting video processing pipeline", component: "Processing")
         LoggingService.debug("Source URL: \(sourceURL.path)", component: "Processing")
         
@@ -33,132 +33,33 @@ actor VideoProcessingService {
         let videoId = UUID().uuidString
         LoggingService.debug("🆔 Generated video ID: \(videoId)", component: "Processing")
         
-        // Create initial Firestore document
-        guard let userId = await AuthenticationManager.shared.currentUser?.uid,
-              let username = await AuthenticationManager.shared.appUser?.username else {
+        // Verify user authentication
+        guard let userId = await AuthenticationManager.shared.currentUser?.uid else {
             LoggingService.error("❌ User not authenticated", component: "Processing")
             throw NSError(domain: "VideoProcessing", 
                          code: -1, 
                          userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
         }
         
-        LoggingService.debug("👤 User info - ID: \(userId), Username: \(username)", component: "Processing")
-        
-        let initialVideo = Video(
-            id: videoId,
-            ownerId: userId,
-            videoURL: "",  // Will be updated after upload
-            thumbnailURL: "", // Will be updated after upload
-            title: "Processing...",
-            tags: [],
-            description: "Processing...",
-            ownerUsername: username
-        )
-        
-        let firestore = Firestore.firestore()
-        
-        // Create the document first with uploading status
-        do {
-            try await firestore
-                .collection("videos")
-                .document(videoId)
-                .setData(initialVideo.toFirestoreData())  // This will automatically set status to .uploading
-            LoggingService.success("📝 Created initial video document with uploading status", component: "Processing")
-        } catch {
-            LoggingService.error("❌ Failed to create initial video document: \(error)", component: "Processing")
-            throw error
-        }
+        LoggingService.debug("👤 User ID: \(userId)", component: "Processing")
         
         do {
-            // Step 1: Upload to Firebase with progress monitoring
+            // Upload to Firebase Storage
             LoggingService.storage("📤 Starting Firebase upload", component: "Upload")
-            let videoDownloadURL = try await uploadToFirebase(
+            _ = try await uploadToFirebase(
                 fileURL: sourceURL,
                 path: "videos",
                 filename: "\(videoId).mp4",  // Always use .mp4 extension for consistency
                 onProgress: onProgress
             )
             LoggingService.success("✅ Upload completed successfully", component: "Upload")
-            LoggingService.debug("📍 Video URL: \(videoDownloadURL)", component: "Upload")
             
-            // Step 2: Update Firestore document with URL and ready status
-            do {
-                try await firestore
-                    .collection("videos")
-                    .document(videoId)
-                    .updateData([
-                        "videoURL": videoDownloadURL,
-                        "thumbnailURL": "",  // No thumbnail needed
-                        "processingStatus": VideoProcessingStatus.ready.rawValue,
-                        "updatedAt": FieldValue.serverTimestamp()
-                    ] as [String: Any])
-                
-                LoggingService.success("✅ Updated video document with URL and ready status", component: "Processing")
-            } catch {
-                LoggingService.error("❌ Failed to update video document: \(error)", component: "Processing")
-                throw error
-            }
+            return videoId  // Return the video ID for tracking
             
-            return (videoDownloadURL, "")
         } catch {
-            // Update status to error on failure
-            do {
-                try await firestore
-                    .collection("videos")
-                    .document(videoId)
-                    .updateData([
-                        "processingStatus": VideoProcessingStatus.error.rawValue,
-                        "processingError": error.localizedDescription
-                    ] as [String: Any])
-                
-                LoggingService.debug("📝 Updated video status to error", component: "Processing")
-            } catch let updateError {
-                LoggingService.error("❌ Failed to update error status: \(updateError)", component: "Processing")
-            }
-            
             LoggingService.error("❌ Processing failed: \(error.localizedDescription)", component: "Processing")
             throw error
         }
-    }
-    
-    // MARK: - Thumbnail Generation
-    private func generateThumbnail(from videoURL: URL) async throws -> URL {
-        let asset = AVURLAsset(url: videoURL)
-        let imageGenerator = AVAssetImageGenerator(asset: asset)
-        imageGenerator.appliesPreferredTrackTransform = true
-        
-        // Configure for high quality
-        imageGenerator.maximumSize = CGSize(width: 1080, height: 1920)
-        
-        // Get thumbnail from first frame
-        let time = CMTime(seconds: 0.1, preferredTimescale: 600)
-        let cgImage = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CGImage, Error>) in
-            imageGenerator.generateCGImageAsynchronously(for: time) { cgImage, actualTime, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else if let cgImage = cgImage {
-                    continuation.resume(returning: cgImage)
-                } else {
-                    continuation.resume(throwing: NSError(domain: "VideoProcessing", 
-                                                        code: -1, 
-                                                        userInfo: [NSLocalizedDescriptionKey: "Failed to generate thumbnail"]))
-                }
-            }
-        }
-        
-        // Convert to JPEG
-        let uiImage = UIImage(cgImage: cgImage)
-        let thumbnailData = uiImage.jpegData(compressionQuality: 0.8)
-        
-        // Save to temp file
-        let thumbnailURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("jpg")
-        
-        try thumbnailData?.write(to: thumbnailURL)
-        LoggingService.success("Generated thumbnail at: \(thumbnailURL.path)", component: "Processing")
-        
-        return thumbnailURL
     }
     
     // MARK: - Firebase Upload
@@ -186,6 +87,13 @@ actor VideoProcessingService {
         
         let metadata = StorageMetadata()
         metadata.contentType = "video/mp4"  // Always use MP4 content type for videos
+        
+        // Add user ID to metadata for cloud function
+        guard let userId = await AuthenticationManager.shared.currentUser?.uid else {
+            throw NSError(domain: "VideoProcessing", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+        }
+        metadata.customMetadata = ["userId": userId]
+        LoggingService.debug("Added userId \(userId) to storage metadata", component: "Storage")
         
         // Create upload task
         let uploadTask = storageRef.putFile(from: fileURL, metadata: metadata)

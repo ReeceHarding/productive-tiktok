@@ -98,11 +98,6 @@ struct VideoUploadView: View {
                     iconName: "film"
                 )
                 StatCard(
-                    title: "Total Views",
-                    value: "\(stats.totalViews)",
-                    iconName: "eye.fill"
-                )
-                StatCard(
                     title: "Total Likes",
                     value: "\(stats.totalLikes)",
                     iconName: "hand.thumbsup.fill"
@@ -459,19 +454,10 @@ extension VideoUploadView {
                 .padding(.vertical, 8)
 
                 HStack(spacing: 12) {
-                    StatLabel(count: video.viewCount, icon: "eye.fill", label: "Views")
-                    StatLabel(count: video.likeCount, icon: "hand.thumbsup.fill", label: "Likes")
-                    StatLabel(count: video.commentCount, icon: "text.bubble.fill", label: "Comments")
                     StatLabel(count: video.saveCount, icon: "bookmark.fill", label: "Saves")
+                    StatLabel(count: video.commentCount, icon: "text.bubble.fill", label: "Comments")
                 }
                 .padding(.horizontal, 12)
-
-                if video.viewCount > 0 {
-                    Text("Engagement Rate: \(engagementRate)%")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 12)
-                }
 
                 HStack(spacing: 16) {
                     Button(action: { showComments = true }) {
@@ -524,8 +510,8 @@ extension VideoUploadView {
         }
         
         private var engagementRate: String {
-            let totalEngagements = video.likeCount + video.commentCount + video.saveCount
-            let rate = Double(totalEngagements) / Double(max(1, video.viewCount)) * 100
+            let totalEngagements = video.saveCount + video.commentCount + video.brainCount
+            let rate = Double(totalEngagements) * 100
             return String(format: "%.1f", rate)
         }
     }
