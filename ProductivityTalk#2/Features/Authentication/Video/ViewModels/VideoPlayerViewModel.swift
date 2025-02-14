@@ -52,7 +52,7 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private var observers: Set<NSKeyValueObservation> = []
     private var timeObserverToken: Any?
-    private var deinitHandler: (() async -> Void)?
+    private var deinitHandler: (() -> Void)?
     private let firestore = Firestore.firestore()
     private var preloadedPlayers: [String: AVPlayer] = [:]
     private var bufferingObserver: NSKeyValueObservation?
@@ -85,11 +85,11 @@ public class VideoPlayerViewModel: ObservableObject {
             }
         }
         
-        // Capture the cleanup values in a closure that can be called from deinit
+        // Setup a synchronous deinit handler to invalidate observers and cleanup player
         let observersCopy = observers
         let playerCopy = player
         let timeObserverTokenCopy = timeObserverToken
-        deinitHandler = { [observersCopy, playerCopy, timeObserverTokenCopy] in
+        deinitHandler = {
             observersCopy.forEach { $0.invalidate() }
             if let token = timeObserverTokenCopy, let player = playerCopy {
                 player.removeTimeObserver(token)
@@ -170,23 +170,27 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     deinit {
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            let videoId = self.video.id
-            if let handler = self.deinitHandler {
-                await handler()
-            }
-            try? await Task.sleep(nanoseconds: 100_000_000) // Small delay to ensure cleanup completes
-            do {
-                await self.cleanup()
-                LoggingService.debug("VideoPlayerViewModel deinit for video \(videoId)", component: "Player")
-            } catch {
-                LoggingService.error("Error during cleanup in deinit for video \(videoId): \(error)", component: "Player")
-            }
-        }
-        // Remove any pending notifications when the view model is deallocated
-        Task {
-            await self.removeNotification()
+        Task { @MainActor in
+            // Capture all values inside the MainActor context
+            let videoId = video.id
+            let playerCopy = player
+            let observersCopy = observers
+            let bufferingObserverCopy = bufferingObserver
+            let loadingObserverCopy = loadingObserver
+            let timeObserverTokenCopy = timeObserverToken
+            let notificationRequestIdsCopy = notificationRequestIds
+            
+            print("VideoPlayerViewModel deinit for video: \(videoId)")
+            
+            syncCleanup(
+                player: playerCopy,
+                observers: observersCopy,
+                bufferingObserver: bufferingObserverCopy,
+                loadingObserver: loadingObserverCopy,
+                timeObserverToken: timeObserverTokenCopy
+            )
+            
+            syncRemoveNotification(notificationRequestIds: notificationRequestIdsCopy)
         }
     }
     
@@ -805,6 +809,34 @@ public class VideoPlayerViewModel: ObservableObject {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: Array(notificationRequestIds))
         notificationRequestIds.removeAll()
         isSubscribedToNotifications = false
+        LoggingService.debug("Removed all notification requests", component: "Player")
+    }
+    
+    // Synchronous cleanup function (no async/await calls)
+    nonisolated private func syncCleanup(
+        player: AVPlayer?,
+        observers: Set<NSKeyValueObservation>,
+        bufferingObserver: NSKeyValueObservation?,
+        loadingObserver: NSKeyValueObservation?,
+        timeObserverToken: Any?
+    ) {
+        observers.forEach { $0.invalidate() }
+        bufferingObserver?.invalidate()
+        loadingObserver?.invalidate()
+        
+        if let token = timeObserverToken, let player = player {
+            player.removeTimeObserver(token)
+        }
+        
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        
+        LoggingService.debug("Cleaned up player resources", component: "Player")
+    }
+    
+    // Synchronous removal of notifications
+    nonisolated private func syncRemoveNotification(notificationRequestIds: Set<String>) {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: Array(notificationRequestIds))
         LoggingService.debug("Removed all notification requests", component: "Player")
     }
 } 
