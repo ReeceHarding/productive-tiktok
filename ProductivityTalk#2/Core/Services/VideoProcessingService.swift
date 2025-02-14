@@ -49,7 +49,7 @@ actor VideoProcessingService {
             _ = try await uploadToFirebase(
                 fileURL: sourceURL,
                 path: "videos",
-                filename: "\(videoId).mp4",  // Always use .mp4 extension for consistency
+                filename: "\(videoId).mov",  // Keep original .mov extension
                 onProgress: onProgress
             )
             LoggingService.success("✅ Upload completed successfully", component: "Upload")
@@ -69,7 +69,7 @@ actor VideoProcessingService {
         filename: String? = nil,
         onProgress: ((Double) -> Void)? = nil
     ) async throws -> String {
-        let actualFilename = filename ?? "\(UUID().uuidString).mp4"  // Always use .mp4 extension
+        let actualFilename = filename ?? "\(UUID().uuidString).mov"  // Use .mov extension
         let storageRef = storage.reference().child("\(path)/\(actualFilename)")
         
         LoggingService.storage("📤 Starting upload to path: \(path)/\(actualFilename)", component: "Storage")
@@ -86,7 +86,7 @@ actor VideoProcessingService {
         LoggingService.debug("File size: \(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))", component: "Storage")
         
         let metadata = StorageMetadata()
-        metadata.contentType = "video/mp4"  // Always use MP4 content type for videos
+        metadata.contentType = "video/quicktime"  // Correct MIME type for MOV files
         
         // Add user ID to metadata for cloud function
         guard let userId = await AuthenticationManager.shared.currentUser?.uid else {

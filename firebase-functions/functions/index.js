@@ -18,10 +18,8 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 /**
- * This function runs when a file in Cloud Storage (under 'videos/' folder) is finalized.
- * It processes the video, extracts audio, transcribes with Whisper, and then uses GPT-4
- * to extract quotes, generate metadata (title, description, tags, etc.).
- * Finally, it updates Firestore with the final data for the video in 'videos/{videoId}'.
+ * This function processes any uploaded file that appears to be a video.
+ * It extracts audio, transcribes with Whisper, and uses GPT-4 for analysis.
  */
 exports.processVideo = onObjectFinalized({
   timeoutSeconds: 540,
@@ -31,48 +29,48 @@ exports.processVideo = onObjectFinalized({
 }, async (event) => {
   const filePath = event.data.name;
   const fileName = path.basename(filePath);
+  const fileExt = path.extname(fileName).toLowerCase();
+  const videoId = path.basename(fileName, fileExt); // Remove any extension
   
-  // Only process videos in the videos/ folder
-  if (!filePath.startsWith("videos/")) {
-    console.log("Not a video upload, skipping processing");
-    return;
-  }
-  
-  // Extract videoId from the filename (remove .mp4 extension)
-  const videoId = path.basename(fileName, ".mp4");
-  console.log(`Starting cloud function processing for video with ID: ${videoId}`);
+  console.log(`🎥 Processing file: ${fileName} (ID: ${videoId})`);
+  console.log(`📁 File path: ${filePath}`);
+  console.log(`📎 File extension: ${fileExt}`);
   
   const bucket = storage.bucket(event.data.bucket);
 
   try {
-    // Get the file metadata to find the uploader
+    // Get the file metadata to find the uploader and verify it's a video
     const [metadata] = await bucket.file(filePath).getMetadata();
-    const userId = metadata.metadata?.userId;
+    console.log("📄 File metadata:", JSON.stringify(metadata, null, 2));
     
+    // Check if it's a video file by content type
+    const contentType = metadata.contentType || "";
+    if (!contentType.startsWith("video/")) {
+      console.log(`⏭️ Skipping non-video file (type: ${contentType})`);
+      return;
+    }
+    
+    const userId = metadata.metadata && metadata.metadata.userId;
     if (!userId) {
-      throw new Error("No userId found in file metadata");
+      console.log("⚠️ No userId in metadata, using 'anonymous'");
     }
     
-    // Get the user's data
-    const userDoc = await admin.firestore().collection("users").doc(userId).get();
-    if (!userDoc.exists) {
-      throw new Error("User document not found");
+    // Get user data if available
+    let userData = {"username": "Anonymous User"};
+    if (userId) {
+      const userDoc = await admin.firestore().collection("users").doc(userId).get();
+      if (userDoc.exists) {
+        userData = userDoc.data();
+      }
     }
-    const userData = userDoc.data();
     
-    // 1) Create initial video document
+    // Create/update video document
     const videoRef = admin.firestore().collection("videos").doc(videoId);
-    const userVideoRef = admin.firestore()
-      .collection("users")
-      .document(userId)
-      .collection("videos")
-      .document(videoId);
-      
-    const batch = admin.firestore().batch();
     
-    batch.set(videoRef, {
+    // Initialize or update the video document
+    await videoRef.set({
       id: videoId,
-      ownerId: userId,
+      ownerId: userId || "anonymous",
       ownerUsername: userData.username,
       videoURL: "",
       thumbnailURL: "",
@@ -83,63 +81,71 @@ exports.processVideo = onObjectFinalized({
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       commentCount: 0,
-      saveCount: 0
-    });
+      saveCount: 0,
+      brainCount: 0,
+      viewCount: 0,
+      originalFileName: fileName,
+      originalPath: filePath,
+      contentType: contentType
+    }, {merge: true});
     
-    batch.set(userVideoRef, {
-      videoId,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-    
-    await batch.commit();
-    console.log(`✅ Created initial video documents for ${videoId}`);
+    // If user exists, create user-video association
+    if (userId) {
+      await admin.firestore()
+        .collection("users")
+        .doc(userId)
+        .collection("videos")
+        .doc(videoId)
+        .set({
+          videoId,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        }, {merge: true});
+    }
 
-    // 2) Generate a signed URL for the video
-    console.log(`Generating signed URL for video: ${filePath}`);
-    const signedUrlConfig = {
+    // Generate a signed URL for the video
+    console.log(`🔗 Generating signed URL for: ${filePath}`);
+    const [signedUrl] = await bucket.file(filePath).getSignedUrl({
       action: "read",
       expires: "03-01-2500",
       version: "v4"
-    };
-    const [signedUrl] = await bucket.file(filePath).getSignedUrl(signedUrlConfig);
-    console.log(`✅ Generated signed URL: ${signedUrl}`);
+    });
 
-    // 3) Update Firestore with the signed URL
     await videoRef.update({
       videoURL: signedUrl,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
-    console.log(`✅ Updated Firestore doc with signedURL for video ${videoId}`);
 
-    // 4) Download the video to a temp folder so we can extract the audio
-    console.log("Downloading video locally for audio extraction...");
+    // Download video for processing
+    console.log("⬇️ Downloading video for processing...");
     const tempFilePath = path.join(os.tmpdir(), fileName);
     await bucket.file(filePath).download({destination: tempFilePath});
-    console.log("✅ Downloaded video locally:", tempFilePath);
-
-    // Set status to transcribing
+    
     await videoRef.update({
       processingStatus: "transcribing",
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
-    console.log(`🔄 Set processingStatus=transcribing for video ${videoId}`);
 
-    // 5) Extract audio
+    // Extract audio (FFmpeg can handle various formats)
     const audioPath = path.join(os.tmpdir(), `${videoId}.mp3`);
     await new Promise((resolve, reject) => {
       ffmpeg(tempFilePath)
         .toFormat("mp3")
+        .on("start", (cmd) => {
+          console.log("🎵 FFmpeg command:", cmd);
+        })
+        .on("progress", (progress) => {
+          console.log(`🎵 FFmpeg progress: ${JSON.stringify(progress)}`);
+        })
         .on("end", () => {
-          console.log("✅ Successfully extracted audio");
+          console.log("✅ Audio extraction complete");
           resolve();
         })
         .on("error", (error) => {
-          console.error("Error extracting audio:", error);
+          console.error("❌ FFmpeg error:", error);
           reject(error);
         })
         .save(audioPath);
     });
-    console.log("Extracted audio to:", audioPath);
 
     // 6) Transcribe audio with Whisper
     const formData = new FormData();
@@ -153,11 +159,10 @@ exports.processVideo = onObjectFinalized({
       formData,
       {
         headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
         },
-        maxBodyLength: Infinity,
-      },
+        maxBodyLength: Infinity
+      }
     );
     const transcriptText = response.data;
     console.log("✅ Transcription completed");
@@ -184,14 +189,14 @@ exports.processVideo = onObjectFinalized({
           model: "gpt-4",
           messages: [{role: "user", content: chatPrompt}],
           max_tokens: 150,
-          temperature: 0.5,
+          temperature: 0.5
         },
         {
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
           },
-          maxBodyLength: Infinity,
+          maxBodyLength: Infinity
         }
       );
       
@@ -207,7 +212,7 @@ exports.processVideo = onObjectFinalized({
 
       // Update with quotes and move to metadata generation
       await videoRef.update({
-        quotes: quotes,
+        quotes,
         processingStatus: "generating_metadata",
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
@@ -228,13 +233,13 @@ exports.processVideo = onObjectFinalized({
                 "(max 60 characters):\n\n" + transcriptText
             }],
             max_tokens: 60,
-            temperature: 0.7,
+            temperature: 0.7
           },
           {
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            },
+              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+            }
           }
         ),
         // Description
@@ -249,13 +254,13 @@ exports.processVideo = onObjectFinalized({
                 "(max 200 characters):\n\n" + transcriptText
             }],
             max_tokens: 200,
-            temperature: 0.7,
+            temperature: 0.7
           },
           {
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            },
+              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+            }
           }
         ),
         // 20 tags
@@ -270,20 +275,20 @@ exports.processVideo = onObjectFinalized({
                 "that best capture the main topics or themes:\n\n" + transcriptText
             }],
             max_tokens: 200,
-            temperature: 0.7,
+            temperature: 0.7
           },
           {
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            },
+              Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+            }
           }
         )
       ]);
 
       const autoTitle = titleRes.data.choices[0].message.content.trim();
       const autoDescription = descriptionRes.data.choices[0].message.content.trim();
-      let autoTags = tagsRes.data.choices[0].message.content.trim()
+      const autoTags = tagsRes.data.choices[0].message.content.trim()
         .split(",")
         .map((tag) => tag.trim())
         .filter((tag) => tag);

@@ -31,14 +31,14 @@ struct ContentView: View {
     
     private func checkAuthState() {
         LoggingService.debug("Starting auth state check", component: "Navigation")
-        // Check if there's a current user immediately
+        // Check if there's a current user
         if Auth.auth().currentUser == nil {
             LoggingService.debug("No current user found, showing sign in", component: "Navigation")
             isLoading = false
             return
         }
         
-        // Add a small delay to allow Firebase to initialize
+        // Small delay to allow Firebase to initialize
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             LoggingService.debug("Auth state check completed, isAuthenticated: \(self.authManager.isAuthenticated)", component: "Navigation")
             isLoading = false
@@ -124,15 +124,23 @@ struct MainTabView: View {
                             Text("Profile")
                         }
                     }
+                    
+                    // New Chat tab
+                    NavigationView {
+                        ChatView()
+                    }
+                    .tabItem {
+                        VStack {
+                            Image(systemName: "bubble.left.and.bubble.right.fill")
+                            Text("Chat with")
+                        }
+                    }
                 }
                 .tint(.blue)
                 .onAppear {
-                    // Customize TabView appearance
                     let appearance = UITabBarAppearance()
                     appearance.configureWithOpaqueBackground()
                     appearance.backgroundColor = .systemBackground
-                    
-                    // Use this appearance for both normal and scrolling
                     UITabBar.appearance().standardAppearance = appearance
                     UITabBar.appearance().scrollEdgeAppearance = appearance
                 }
