@@ -7,6 +7,8 @@ Do exactly as instructed. Do not deviate. As a software architect, read through 
 
 run xcodebuild -project ProductivityTalk#2.xcodeproj -scheme ProductivityTalk#2 -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.2' clean build | xcpretty after every time you change the code.
 
+you can ignore all warnings. we only care about errors.
+
 make sure that all expressions marked 'async' are marked with 'await'
 
 /Users/reeceharding/ProductivityTalk#2/ProductivityTalk#2/ProductivityTalk#2/Features/Video/ViewModels/VideoPlayerViewModel.swift:173:72 Expression is 'async' but is not marked with 'await'

@@ -64,12 +64,7 @@ struct ChatView: View {
             }
             
             if viewModel.isLoading {
-                Color.black.opacity(0.4)
-                    .ignoresSafeArea()
-                    .overlay {
-                        LoadingAnimation(message: "Thinking...")
-                            .foregroundStyle(.white)
-                    }
+                LoadingOverlay()
             }
         }
         .onChange(of: viewModel.errorMessage) { _, newError in
@@ -78,7 +73,7 @@ struct ChatView: View {
             }
             showErrorAlert = newError != nil
         }
-        .onChange(of: scenePhase) { _, newPhase in
+        .onChange(of: scenePhase) { newPhase in
             if newPhase == .active {
                 hapticEngine.prepare()
             }
@@ -178,7 +173,7 @@ private struct ChatMessagesView: View {
             }
             .refreshable {
                 hapticEngine.impactOccurred()
-                await viewModel.sendUserMessage()
+                await viewModel.loadTranscripts()
             }
             .onChange(of: viewModel.messages.count) { _, _ in
                 if scrollToBottom {
@@ -199,8 +194,7 @@ private struct ChatMessagesView: View {
                     ScrollToBottomButton(
                         scrollToBottom: $scrollToBottom,
                         proxy: scrollProxy,
-                        hapticEngine: hapticEngine,
-                        messages: viewModel.messages
+                        hapticEngine: hapticEngine
                     )
                 }
             }
@@ -218,14 +212,13 @@ private struct ScrollToBottomButton: View {
     @Binding var scrollToBottom: Bool
     let proxy: ScrollViewProxy
     let hapticEngine: UIImpactFeedbackGenerator
-    let messages: [ChatMessage]
     
     var body: some View {
         Button {
             hapticEngine.impactOccurred(intensity: 0.4)
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                 scrollToBottom = true
-                if let lastId = messages.last?.id {
+                if let lastId = viewModel.messages.last?.id {
                     proxy.scrollTo(lastId, anchor: .bottom)
                 }
             }
@@ -415,6 +408,22 @@ private struct Avatar: View {
     }
 }
 
+
+private struct LoadingAnimation: View {
+    let message: String
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.5)
+            
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 private struct ChatSearchBar: View {
     @Binding var searchQuery: String
     @Binding var isSearching: Bool
@@ -472,7 +481,7 @@ private struct ChatInputBar: View {
             Button {
                 hapticEngine.impactOccurred(intensity: 0.6)
                 Task {
-                    await viewModel.sendUserMessage()
+                    await viewModel.sendMessage()
                 }
                 scrollToBottom = true
             } label: {
@@ -531,12 +540,12 @@ private struct EmptyChatView: View {
                 .foregroundStyle(.blue)
             
             Text("No messages yet")
-                .font(.headline)
+                .font(.title2)
+                .fontWeight(.medium)
             
-            Text("Start a conversation by typing a message below.")
+            Text("Start a conversation with GPT-4")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -558,8 +567,8 @@ private struct VideoPreviewCard: View {
                     .fontWeight(.medium)
                     .lineLimit(2)
                 
-                if !video.thumbnailURL.isEmpty {
-                    Text(video.thumbnailURL)
+                if let description = video.description {
+                    Text(description)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

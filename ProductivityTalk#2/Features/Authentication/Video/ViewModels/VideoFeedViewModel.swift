@@ -165,13 +165,12 @@ public class VideoFeedViewModel: ObservableObject {
             
             // Update the video in the local array if it has changed
             if let index = self.videos.firstIndex(where: { $0.id == updatedVideo.id }) {
-                // Only update if there is a change in critical fields
                 if self.videos[index].processingStatus != updatedVideo.processingStatus ||
-                    self.videos[index].videoURL != updatedVideo.videoURL {
+                    self.videos[index].videoURL != updatedVideo.videoURL ||
+                    self.videos[index].viewCount != updatedVideo.viewCount {
                     LoggingService.video("Updating video \(updatedVideo.id) in feed (status: \(updatedVideo.processingStatus.rawValue))", component: "Feed")
                     Task { @MainActor in
                         self.videos[index] = updatedVideo
-                        // Update player view model if it exists
                         if let playerViewModel = self.playerViewModels[updatedVideo.id] {
                             playerViewModel.video = updatedVideo
                         }
@@ -199,12 +198,9 @@ public class VideoFeedViewModel: ObservableObject {
         let preloadTask = Task.detached(priority: .background) { [weak self] in
             guard let self = self else { return }
             
-            // Get the player view model for this video
             guard let playerViewModel = await MainActor.run(body: { self.playerViewModels[video.id] }) else {
                 return
             }
-            
-            // Preload the video in the background
             await playerViewModel.preloadVideo(video)
             
             LoggingService.success("Successfully preloaded video at index \(index)", component: "Feed")
@@ -235,7 +231,6 @@ public class VideoFeedViewModel: ObservableObject {
     
     // MARK: - Audio Control
     /// Pauses all VideoPlayerViewModel instances except for the one whose video id matches currentVideoId.
-    /// This ensures that only one video plays audio at a time.
     func pauseAllExcept(videoId: String) async {
         LoggingService.debug("Pausing all players except video \(videoId)", component: "FeedVM")
         for (id, playerVM) in playerViewModels {
@@ -245,4 +240,4 @@ public class VideoFeedViewModel: ObservableObject {
             }
         }
     }
-} 
+}

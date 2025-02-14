@@ -2,7 +2,7 @@ import SwiftUI
 import AVKit
 import FirebaseFirestore
 import UserNotifications
-
+ 
 public struct VideoPlayerView: View {
     let video: Video
     @StateObject var viewModel: VideoPlayerViewModel
@@ -54,20 +54,13 @@ public struct VideoPlayerView: View {
                         }
                     )
                     .overlay(
-                        // Play/Pause tap area (excluding the control buttons area)
                         GeometryReader { geometry in
                             Color.clear
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     Task {
                                         if viewModel.isPlaying {
-                                            do {
-                                                try await viewModel.pause()
-                                            } catch {
-                                                LoggingService.error("Failed to pause video: \(error)", component: "Player")
-                                                errorMessage = "Failed to pause video"
-                                                showError = true
-                                            }
+                                            viewModel.pause()
                                         } else {
                                             do {
                                                 try await viewModel.play()
@@ -80,10 +73,9 @@ public struct VideoPlayerView: View {
                                     }
                                 }
                                 .frame(maxWidth: .infinity)
-                                .frame(maxHeight: geometry.size.height * 0.85) // Leave space for controls
+                                .frame(maxHeight: geometry.size.height * 0.85)
                         }
                     )
-                    // Disable default video controls
                     .disabled(true)
             } else {
                 VideoLoadingView(progress: $loadingProgress)
@@ -126,12 +118,23 @@ public struct VideoPlayerView: View {
         .task {
             LoggingService.debug("🎥 VideoPlayerView task started for \(video.id), shouldAutoPlay: \(shouldAutoPlay)", component: "UI")
             if !viewModel.isLoading && viewModel.player == nil {
-                await viewModel.loadVideo()
+                do {
+                    try await viewModel.loadVideo()
+                } catch {
+                    LoggingService.error("Failed to load video in task: \(error.localizedDescription)", component: "Player")
+                }
             }
         }
         .onAppear {
             LoggingService.video("Video view appeared for \(video.id), shouldAutoPlay: \(shouldAutoPlay)", component: "UI")
             isVisible = true
+            Task {
+                do {
+                    try await viewModel.loadVideo()
+                } catch {
+                    LoggingService.error("Failed to load video: \(error.localizedDescription)", component: "Player")
+                }
+            }
         }
         .task(id: isVisible) {
             if isVisible && !viewModel.isLoading && shouldAutoPlay {
@@ -320,7 +323,6 @@ private struct ControlsOverlay: View {
                                         let settings = await center.notificationSettings()
                                         
                                         if settings.authorizationStatus == .authorized {
-                                            // Show notification setup view
                                             let setupView = VideoNotificationSetupView(
                                                 videoId: viewModel.video.id,
                                                 originalTranscript: viewModel.video.transcript ?? ""
@@ -331,11 +333,9 @@ private struct ControlsOverlay: View {
                                                 root.present(hostingController, animated: true)
                                             }
                                         } else {
-                                            // Request permission if not granted
                                             do {
                                                 let granted = try await center.requestAuthorization(options: [.alert, .sound])
                                                 if granted {
-                                                    // Show notification setup view after permission granted
                                                     let setupView = VideoNotificationSetupView(
                                                         videoId: viewModel.video.id,
                                                         originalTranscript: viewModel.video.transcript ?? ""
@@ -388,7 +388,6 @@ private struct ControlButton: View {
                 scale = 0.8
             }
             
-            // Reset scale with a slight delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.6, blendDuration: 0.2)) {
                     isPressed = false
@@ -439,21 +438,6 @@ struct ButtonFramePreferenceKey: PreferenceKey {
     }
 }
 
-#Preview {
-    let mockVideo = Video(
-        id: "mock-id",
-        ownerId: "mock-owner",
-        videoURL: "https://example.com/video.mp4",
-        thumbnailURL: "https://example.com/thumbnail.jpg",
-        title: "Mock Video",
-        tags: ["test", "mock"],
-        description: "This is a mock video for testing",
-        ownerUsername: "mockUser"
-    )
-    return VideoPlayerView(video: mockVideo, shouldAutoPlay: .constant(true))
-}
-
-// Add ToastView at the end of the file
 private struct VideoPlayerToastView: View {
     let message: String?
     
