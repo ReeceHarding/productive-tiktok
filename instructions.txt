@@ -1,0 +1,198 @@
+# Video Processing Migration Instructions
+
+## Goal
+Migrate video processing from Firebase Functions to native iOS to:
+1. Improve reliability by eliminating cloud function timeouts and cold starts
+2. Enhance performance with local processing
+3. Provide better user experience with real-time progress updates
+4. Reduce cloud costs by processing on device
+5. Maintain existing functionality while improving the implementation
+6. Keep the same data structure in Firestore for compatibility
+
+## Dependencies to Add to Podfile
+```ruby
+pod 'mobile-ffmpeg-full'     # For audio extraction
+pod 'OpenAIKit'              # For OpenAI API integration
+```
+
+## Implementation Steps
+
+### 1. Core Services Setup
+
+Create OpenAIService.swift:
+```swift
+actor OpenAIService {
+    static let shared = OpenAIService()
+    private let apiKey: String
+    
+    func transcribeAudio(url: URL) async throws -> String
+    func analyzeContent(transcript: String) async throws -> (title: String, description: String, tags: [String], quotes: [String])
+}
+```
+
+### 2. VideoProcessingService Enhancement
+
+Update VideoProcessingService.swift to include:
+```swift
+actor VideoProcessingService {
+    // Existing upload code remains the same
+    
+    // Add new processing methods:
+    func extractAudio(from videoURL: URL) async throws -> URL
+    func processVideo(url: URL) async throws -> String
+    func updateProcessingStatus(videoId: String, status: ProcessingStatus)
+}
+```
+
+### 3. Models
+
+Add ProcessingModels.swift:
+```swift
+enum ProcessingStatus: String {
+    case uploading
+    case extractingAudio
+    case transcribing
+    case analyzing
+    case ready
+    case error
+}
+
+struct ProcessingProgress {
+    let step: ProcessingStatus
+    let progress: Double
+    let message: String
+}
+```
+
+### 4. Implementation Order
+
+1. Video Upload & Storage:
+   - Keep existing upload code
+   - Add progress tracking
+   - Create initial Firestore document
+
+2. Audio Extraction:
+   - Use FFmpeg to extract MP3
+   - Save to temp directory
+   - Track progress
+
+3. Transcription:
+   - Send MP3 to Whisper API
+   - Update Firestore with transcript
+   - Handle API errors
+
+4. Content Analysis:
+   - Send transcript to GPT-4
+   - Generate title, description, quotes
+   - Update Firestore with results
+
+5. Cleanup:
+   - Remove temp files
+   - Update final status
+   - Notify UI of completion
+
+### 5. Code Structure
+
+VideoProcessingService.swift:
+```swift
+// Main processing pipeline
+func processVideo(url: URL) async throws -> String {
+    let videoId = UUID().uuidString
+    
+    // 1. Upload
+    try await uploadToFirebase(...)
+    
+    // 2. Extract Audio
+    let audioURL = try await extractAudio(from: url)
+    
+    // 3. Transcribe
+    let transcript = try await OpenAIService.shared.transcribeAudio(url: audioURL)
+    
+    // 4. Analyze
+    let (title, description, tags, quotes) = try await OpenAIService.shared.analyzeContent(transcript: transcript)
+    
+    // 5. Update Firestore
+    try await updateFirestore(videoId: videoId, title: title, description: description, tags: tags, quotes: quotes)
+    
+    return videoId
+}
+```
+
+### 6. Progress Tracking
+
+Add to VideoUploadViewModel.swift:
+```swift
+@Published private(set) var processingProgress: ProcessingProgress?
+@Published private(set) var currentStatus: ProcessingStatus = .uploading
+
+func trackProgress(videoId: String) {
+    // Listen to Firestore updates
+    // Update UI based on processing status
+}
+```
+
+### 7. Error Recovery
+
+Add basic error handling:
+```swift
+enum ProcessingError: Error {
+    case uploadFailed(Error)
+    case audioExtractionFailed(Error)
+    case transcriptionFailed(Error)
+    case analysisFailed(Error)
+}
+
+// Add to processing methods:
+do {
+    // Processing code
+} catch {
+    await updateProcessingStatus(videoId: videoId, status: .error)
+    throw error
+}
+```
+
+### 8. Logging
+
+Add throughout code:
+```swift
+LoggingService.debug("Starting video processing", component: "Processing")
+LoggingService.progress("Video upload", progress: progress, component: "Upload")
+LoggingService.error("Processing failed: \(error)", component: "Processing")
+```
+
+## Implementation Notes
+
+1. All processing happens on iOS device
+2. Progress updates through Firestore
+3. Keep existing Firebase Storage for video hosting
+4. Use temp directory for processing files
+5. Clean up temp files after processing
+6. Add logging for debugging
+7. Handle background processing
+8. Update UI in real-time
+
+## Required Environment Variables
+
+1. OpenAI API Key (for Whisper and GPT-4)
+2. Firebase config (existing)
+
+## File Changes Required
+
+1. VideoProcessingService.swift (enhance)
+2. OpenAIService.swift (new)
+3. ProcessingModels.swift (new)
+4. VideoUploadViewModel.swift (enhance)
+5. VideoUploadView.swift (enhance progress UI)
+
+## Order of Implementation
+
+1. Add dependencies
+2. Create OpenAIService
+3. Enhance VideoProcessingService
+4. Add processing models
+5. Update view model
+6. Update UI
+7. Test end-to-end
+8. Add error handling
+9. Add logging
+10. Clean up and optimize 
