@@ -116,6 +116,16 @@ struct MainTabView: View {
                         }
                     
                     NavigationView {
+                        ChatView()
+                    }
+                    .tabItem {
+                        VStack {
+                            Image(systemName: "ellipsis.bubble.fill")
+                            Text("Chat")
+                        }
+                    }
+                    
+                    NavigationView {
                         ProfileView()
                     }
                     .tabItem {
@@ -145,27 +155,27 @@ struct MainTabView: View {
                             }
                     }
                 }
-            }
-        }
-        .alert("Sign Out", isPresented: $showSignOutAlert) {
-            Button("Cancel", role: .cancel) { }
-            Button("Sign Out", role: .destructive) {
-                signOut()
-            }
-            .disabled(isSigningOut)
-        } message: {
-            Text("Are you sure you want to sign out?")
-        }
-        .alert("Sign Out Error", isPresented: .init(
-            get: { signOutError != nil },
-            set: { if !$0 { signOutError = nil } }
-        )) {
-            Button("OK", role: .cancel) {
-                signOutError = nil
-            }
-        } message: {
-            if let error = signOutError {
-                Text(error)
+                .alert("Sign Out", isPresented: $showSignOutAlert) {
+                    Button("Cancel", role: .cancel) { }
+                    Button("Sign Out", role: .destructive) {
+                        signOut()
+                    }
+                    .disabled(isSigningOut)
+                } message: {
+                    Text("Are you sure you want to sign out?")
+                }
+                .alert("Sign Out Error", isPresented: .init(
+                    get: { signOutError != nil },
+                    set: { if !$0 { signOutError = nil } }
+                )) {
+                    Button("OK", role: .cancel) {
+                        signOutError = nil
+                    }
+                } message: {
+                    if let error = signOutError {
+                        Text(error)
+                    }
+                }
             }
         }
     }

@@ -71,9 +71,13 @@ final class VideoManagementViewModel: ObservableObject {
                     .document(videoId)
                     .getDocument()
                 
-                if let video = Video(document: videoDoc) {
+                if let video = Video(document: videoDoc),
+                   video.processingStatus == .ready {
+                    LoggingService.debug("Adding ready video: \(video.id)", component: "Management")
                     fetchedVideos.append(video)
                     subscribeToUpdates(for: video)
+                } else {
+                    LoggingService.debug("Skipping video \(videoId) - Not ready", component: "Management")
                 }
             }
             

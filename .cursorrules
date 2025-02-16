@@ -11,6 +11,8 @@ make sure that all expressions marked 'async' are marked with 'await'
 
 /Users/reeceharding/ProductivityTalk#2/ProductivityTalk#2/ProductivityTalk#2/Features/Video/ViewModels/VideoPlayerViewModel.swift:173:72 Expression is 'async' but is not marked with 'await'
 
+our firebase project is called new productivity talk.
+
 
 Always read the code base before writing code to see if we have a current implementation and always change the current implementation before creating a new file. read teh entire call don't guess about fixes. don't say "should". literally read the codebase and find the exact implementation. that will 100% give you the answer. code is determistic. you shouldn't have to guess. there's 100% a correct implementation in the codebase to make. the problem you have is that you're not reading the codebase. you're just guessing. you should read literally every file in the codebase that's related to the problem to find the exact implementation 
 

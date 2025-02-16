@@ -7,7 +7,6 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const FormData = require("form-data");
-const crypto = require("crypto");
 
 // Initialize the Admin SDK
 admin.initializeApp();
@@ -28,12 +27,10 @@ const EXPIRATION_DAYS = 6; // Using 6 days instead of 7 for safety margin
  * @returns {string} A unique video ID
  */
 function generateVideoId(filename) {
-  const timestamp = Date.now();
-  const randomBytes = crypto.randomBytes(4).toString("hex");
-  const sanitizedFilename = path.basename(filename).replace(/[^a-zA-Z0-9]/g, "_");
-  const uniqueId = `${sanitizedFilename}_${timestamp}_${randomBytes}`;
-  console.log(`🔑 Generated unique video ID: ${uniqueId}`);
-  return uniqueId;
+  // Extract the video ID from the filename (it's already in the format we want)
+  const videoId = path.basename(filename, path.extname(filename));
+  console.log(`🔑 Using existing video ID from filename: ${videoId}`);
+  return videoId;
 }
 
 /**

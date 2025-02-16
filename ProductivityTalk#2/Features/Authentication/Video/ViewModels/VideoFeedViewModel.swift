@@ -96,6 +96,7 @@ public class VideoFeedViewModel: ObservableObject {
         
         do {
             let query = firestore.collection("videos")
+                .whereField("processingStatus", isEqualTo: VideoProcessingStatus.ready.rawValue)
                 .order(by: "createdAt", descending: true)
                 .limit(to: batchSize)
             
@@ -147,6 +148,7 @@ public class VideoFeedViewModel: ObservableObject {
         do {
             LoggingService.video("Fetching next batch of \(batchSize) videos", component: "Feed")
             let query = firestore.collection("videos")
+                .whereField("processingStatus", isEqualTo: VideoProcessingStatus.ready.rawValue)
                 .order(by: "createdAt", descending: true)
                 .start(afterDocument: lastDoc)
                 .limit(to: batchSize)

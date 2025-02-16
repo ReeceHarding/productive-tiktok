@@ -70,12 +70,12 @@ final class VideoUploadViewModel: ObservableObject {
     func loadVideos() async {
         LoggingService.video("Starting to load selected videos (count: \(selectedItems.count))", component: "Upload")
         
-        // Immediately create upload states for all selected items
+        // Immediately create upload states for all selected items with temporary IDs
         for _ in selectedItems {
-            let id = UUID().uuidString
+            let tempId = UUID().uuidString
             await MainActor.run {
-                LoggingService.debug("Creating initial upload state for video \(id)", component: "Upload")
-                self.uploadStates[id] = UploadState(
+                LoggingService.debug("Creating initial upload state for video with temp ID \(tempId)", component: "Upload")
+                self.uploadStates[tempId] = UploadState(
                     progress: 0.0,
                     isComplete: false,
                     thumbnailImage: nil,
@@ -88,15 +88,15 @@ final class VideoUploadViewModel: ObservableObject {
         
         // Process each video
         for (index, item) in selectedItems.enumerated() {
-            let id = Array(uploadStates.keys)[index]
+            let tempId = Array(uploadStates.keys)[index]
             var tempURL: URL?
             
-            LoggingService.debug("Processing video item with generated ID: \(id)", component: "Upload")
+            LoggingService.debug("Processing video item with temp ID: \(tempId)", component: "Upload")
             
             do {
                 // Load video data
                 guard let vidData = try await item.loadTransferable(type: Data.self) else {
-                    LoggingService.error("Failed to load video data for item \(id)", component: "Upload")
+                    LoggingService.error("Failed to load video data for item \(tempId)", component: "Upload")
                     throw NSError(domain: "VideoUpload", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load video data"])
                 }
                 
@@ -104,11 +104,11 @@ final class VideoUploadViewModel: ObservableObject {
                 LoggingService.success("Successfully loaded video data: \(fileSizeString)", component: "Upload")
                 
                 await MainActor.run {
-                    self.uploadStates[id]?.progress = 0.05  // Start at 5% for data load
+                    self.uploadStates[tempId]?.progress = 0.05  // Start at 5% for data load
                 }
                 
                 // Create temporary file
-                tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(id).mov")
+                tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(tempId).mov")
                 guard let tempURL = tempURL else {
                     throw NSError(domain: "VideoUpload", code: -3, userInfo: [NSLocalizedDescriptionKey: "Failed to create tempURL"])
                 }
@@ -116,98 +116,47 @@ final class VideoUploadViewModel: ObservableObject {
                 try vidData.write(to: tempURL)
                 LoggingService.debug("Saved video to temporary file: \(tempURL.path)", component: "Upload")
                 await MainActor.run {
-                    self.uploadStates[id]?.progress = 0.1  // 10% for temp file creation
+                    self.uploadStates[tempId]?.progress = 0.1  // 10% for temp file creation
                 }
-                
-                // Create Firestore doc references
-                guard let userId = AuthenticationManager.shared.currentUser?.uid,
-                      let username = AuthenticationManager.shared.appUser?.username else {
-                    LoggingService.error("User not authenticated (userId or username missing)", component: "Upload")
-                    throw NSError(domain: "VideoUpload", code: -2, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
-                }
-                
-                LoggingService.debug("User info - ID: \(userId), Username: \(username)", component: "Upload")
-                
-                let video = Video(
-                    id: id,
-                    ownerId: userId,
-                    videoURL: "",
-                    thumbnailURL: "",
-                    title: "Processing...",
-                    tags: [],
-                    description: "Processing...",
-                    ownerUsername: username
-                )
-                
-                // Firestore batch
-                let batch = firestore.batch()
-                LoggingService.debug("Starting Firestore batch write for video \(id)", component: "Upload")
-                
-                // main video doc
-                let videoRef = firestore.collection("videos").document(id)
-                batch.setData(video.toFirestoreData(), forDocument: videoRef)
-                
-                // user-videos reference
-                let userVideoRef = firestore
-                    .collection("users")
-                    .document(userId)
-                    .collection("videos")
-                    .document(id)
-                batch.setData([
-                    "videoId": id,
-                    "createdAt": Timestamp()
-                ], forDocument: userVideoRef)
-                
-                try await batch.commit()
-                LoggingService.success("Created initial video documents in Firestore", component: "Upload")
                 
                 // Use local VideoProcessingService to upload
                 LoggingService.video("Starting video processing pipeline", component: "Upload")
-                let (videoURL, thumbnailURL) = try await videoProcessor.processAndUploadVideo(
+                let (videoId, videoURL, thumbnailURL) = try await videoProcessor.processAndUploadVideo(
                     sourceURL: tempURL,
                     onProgress: { [weak self] progress in
                         Task { @MainActor in
                             guard let self = self else { return }
                             // Scale progress from 10% to 90% during upload
                             let scaledProgress = 0.1 + (progress * 0.8)
-                            self.uploadStates[id]?.progress = scaledProgress
-                            LoggingService.debug("Upload progress for \(id): \(Int(scaledProgress * 100))% (Firebase: \(Int(progress * 100))%)", component: "Upload")
+                            self.uploadStates[tempId]?.progress = scaledProgress
+                            LoggingService.debug("Upload progress for temp ID \(tempId): \(Int(scaledProgress * 100))% (Firebase: \(Int(progress * 100))%)", component: "Upload")
                         }
                     }
                 )
-                LoggingService.success("Video processed successfully", component: "Upload")
+                LoggingService.success("Video processed successfully with videoId: \(videoId)", component: "Upload")
                 LoggingService.debug("Video URL: \(videoURL)", component: "Upload")
                 LoggingService.debug("Thumbnail URL: \(thumbnailURL)", component: "Upload")
                 
-                // Mark complete
+                // Transfer the upload state from tempId to actual videoId
                 await MainActor.run {
-                    self.uploadStates[id]?.progress = 1.0
-                    self.uploadStates[id]?.isComplete = true
-                    self.uploadStates[id]?.processingStatus = .ready
+                    if let state = self.uploadStates.removeValue(forKey: tempId) {
+                        self.uploadStates[videoId] = state
+                        self.uploadStates[videoId]?.progress = 0.9  // Set to 90% after upload
+                        self.uploadStates[videoId]?.isComplete = false  // Not complete until processing is done
+                        LoggingService.debug("Transferred upload state from temp ID \(tempId) to video ID \(videoId)", component: "Upload")
+                    }
                 }
                 
                 // Add a listener to track the server function status changes
-                listenToVideoDocument(id: id)
+                listenToVideoDocument(id: videoId)
                 
             } catch {
                 LoggingService.error("Failed to process video: \(error.localizedDescription)", component: "Upload")
                 await MainActor.run {
-                    self.uploadStates[id]?.progress = 0
+                    self.uploadStates[tempId]?.progress = 0
                     self.showError = true
                     self.errorMessage = "Failed to process video: \(error.localizedDescription)"
-                    self.uploadStates[id]?.processingStatus = .error
-                }
-                // Clean up Firestore doc
-                do {
-                    try await firestore.collection("videos").document(id).delete()
-                    try await firestore
-                        .collection("users")
-                        .document(AuthenticationManager.shared.currentUser?.uid ?? "")
-                        .collection("videos")
-                        .document(id)
-                        .delete()
-                } catch let cleanupError {
-                    LoggingService.error("Failed to clean up Firestore docs: \(cleanupError)", component: "Upload")
+                    self.uploadStates[tempId]?.processingStatus = .error
                 }
             }
             
@@ -257,15 +206,14 @@ final class VideoUploadViewModel: ObservableObject {
                     
                     switch newStatus {
                     case .uploading:
-                        // Don't override progress during upload
-                        break
+                        // Keep existing progress during upload phase
+                        if currentProgress < 0.9 {
+                            LoggingService.debug("Upload State: maintaining upload progress at \(currentProgress)", component: "Upload")
+                        }
                         
                     case .transcribing:
-                        // Only update if we're past upload phase
-                        if currentProgress >= 0.9 {
-                            self.uploadStates[id]?.progress = 0.92
-                            LoggingService.debug("Upload State: set progress to 0.92 for status transcribing", component: "Upload")
-                        }
+                        self.uploadStates[id]?.progress = 0.92
+                        LoggingService.debug("Upload State: set progress to 0.92 for status transcribing", component: "Upload")
                         
                     case .extractingQuotes:
                         self.uploadStates[id]?.progress = 0.94
@@ -283,11 +231,17 @@ final class VideoUploadViewModel: ObservableObject {
                         self.uploadStates[id]?.progress = 1.0
                         self.uploadStates[id]?.isComplete = true
                         LoggingService.success("Video \(id) is fully processed and ready", component: "Upload")
+                        // Remove the listener once we're done
+                        self.documentListeners[id]?.remove()
+                        self.documentListeners.removeValue(forKey: id)
                         
                     case .error:
                         self.uploadStates[id]?.progress = 0
                         self.uploadStates[id]?.isComplete = false
                         LoggingService.error("Video \(id) is in error status", component: "Upload")
+                        // Remove the listener on error
+                        self.documentListeners[id]?.remove()
+                        self.documentListeners.removeValue(forKey: id)
                     }
                 }
                 
@@ -327,13 +281,6 @@ final class VideoUploadViewModel: ObservableObject {
                 
                 // Update statistics
                 LoggingService.debug("Video \(id) stats - Views: \(video.viewCount), Likes: \(video.likeCount), Comments: \(video.commentCount), Saves: \(video.saveCount)", component: "Upload")
-                
-                // If final or error, remove listener
-                if video.processingStatus == .ready || video.processingStatus == .error {
-                    self.documentListeners[id]?.remove()
-                    self.documentListeners.removeValue(forKey: id)
-                    LoggingService.debug("Removed listener for video \(id) - final status: \(video.processingStatus.rawValue)", component: "Upload")
-                }
             }
         }
     }
