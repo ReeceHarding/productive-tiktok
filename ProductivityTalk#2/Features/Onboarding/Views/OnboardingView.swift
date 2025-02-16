@@ -34,48 +34,51 @@ struct OnboardingView: View {
                 case .calendar:
                     calendarStep
                 case .completed:
-                    EmptyView()
+                    MainTabView()
                 }
                 
                 Spacer()
                 
                 // Navigation buttons
-                HStack {
-                    Button(action: {
-                        impactGenerator.impactOccurred(intensity: 0.5)
-                        viewModel.skipOnboarding()
-                        dismiss()
-                    }) {
-                        Text("Skip")
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        impactGenerator.impactOccurred(intensity: 0.6)
-                        viewModel.nextStep()
-                        if viewModel.state.currentStep == .completed {
-                            dismiss()
+                if viewModel.state.currentStep != .completed {
+                    HStack {
+                        Button(action: {
+                            impactGenerator.impactOccurred(intensity: 0.5)
+                            viewModel.skipOnboarding()
+                        }) {
+                            Text("Skip")
+                                .foregroundColor(.secondary)
                         }
-                    }) {
-                        Text(viewModel.state.currentStep == .calendar ? "Get Started" : "Next")
-                            .bold()
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 30)
-                            .padding(.vertical, 15)
-                            .background(Color.blue)
-                            .clipShape(Capsule())
+                        .padding()
+                        
+                        Spacer()
+                        
+                        Button(action: {
+                            impactGenerator.impactOccurred(intensity: 0.6)
+                            viewModel.nextStep()
+                        }) {
+                            Text(viewModel.state.currentStep == .calendar ? "Get Started" : "Next")
+                                .bold()
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 30)
+                                .padding(.vertical, 15)
+                                .background(Color.blue)
+                                .clipShape(Capsule())
+                        }
                     }
+                    .padding(.horizontal)
+                    .padding(.bottom, 30)
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 30)
             }
         }
         .onAppear {
             notificationGenerator.prepare()
             impactGenerator.prepare()
+        }
+        .onChange(of: viewModel.state.currentStep) { oldValue, newValue in
+            if newValue == .completed {
+                LoggingService.success("Onboarding completed, redirecting to main view", component: "Onboarding")
+            }
         }
     }
     

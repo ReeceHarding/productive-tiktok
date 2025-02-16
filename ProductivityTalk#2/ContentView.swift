@@ -11,12 +11,15 @@ import FirebaseFirestore
 
 struct ContentView: View {
     @StateObject private var authManager = AuthenticationManager.shared
+    @StateObject private var onboardingViewModel = OnboardingViewModel()
     @State private var isLoading = true
     
     var body: some View {
         Group {
             if isLoading {
                 SharedLoadingView("Initializing...")
+            } else if !OnboardingState.load().hasCompletedOnboarding && authManager.isAuthenticated {
+                OnboardingView(viewModel: onboardingViewModel)
             } else if authManager.isAuthenticated {
                 MainTabView()
             } else {
@@ -33,15 +36,26 @@ struct ContentView: View {
         LoggingService.debug("Starting auth state check", component: "Navigation")
         // Check if there's a current user immediately
         if Auth.auth().currentUser == nil {
-            LoggingService.debug("No current user found, showing sign in", component: "Navigation")
+            LoggingService.debug("No current user found, showing sign up", component: "Navigation")
             isLoading = false
             return
         }
         
         // Add a small delay to allow Firebase to initialize
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // Check if the user is a temporary user
+            if let username = self.authManager.appUser?.username,
+               username.lowercased().contains("user") {
+                LoggingService.debug("Temporary user detected (username: \(username)), showing sign up", component: "Navigation")
+                Task {
+                    try? await self.authManager.signOut()
+                }
+                self.isLoading = false
+                return
+            }
+            
             LoggingService.debug("Auth state check completed, isAuthenticated: \(self.authManager.isAuthenticated)", component: "Navigation")
-            isLoading = false
+            self.isLoading = false
         }
     }
 }

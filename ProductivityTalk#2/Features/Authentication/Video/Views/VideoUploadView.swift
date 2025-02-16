@@ -302,8 +302,8 @@ extension VideoUploadView {
                     VStack(alignment: .leading, spacing: 8) {
                         if !state.isComplete {
                             HStack(spacing: 4) {
-                                LoadingAnimation(message: nil)
-                                    .frame(width: 24, height: 24)
+                                ProgressView()
+                                    .scaleEffect(0.8)
                                 Text(processingStageMessage)
                                     .font(.caption)
                                     .foregroundColor(.secondary)

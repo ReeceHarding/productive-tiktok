@@ -46,10 +46,19 @@ class AuthenticationManager: ObservableObject {
     private var activeListeners: [ListenerRegistration] = []
     
     deinit {
-        LoggingService.authentication("Cleaning up AuthenticationManager", component: "Auth")
-        authStateHandle = nil
+        LoggingService.authentication("AuthenticationManager deinit started", component: "Auth")
+        
+        // Remove auth state listener
+        if let handle = authStateHandle {
+            auth.removeStateDidChangeListener(handle)
+            authStateHandle = nil
+        }
+        
+        // Remove all active Firestore listeners
         activeListeners.forEach { $0.remove() }
         activeListeners.removeAll()
+        
+        LoggingService.authentication("AuthenticationManager deinit completed", component: "Auth")
     }
     
     private init() {
@@ -212,65 +221,75 @@ class AuthenticationManager: ObservableObject {
     }
     
     func signOut() async throws {
-        LoggingService.authentication("Attempting to sign out user", component: "Auth")
-        do {
-            // Post notification to clean up video players
-            NotificationCenter.default.post(name: .init("CleanupVideoPlayers"), object: nil)
-            LoggingService.success("Posted cleanup notification for video players", component: "Auth")
-            
-            // Wait for cleanup to complete
-            try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            
-            // Remove all Firestore listeners first
-            activeListeners.forEach { $0.remove() }
-            activeListeners.removeAll()
-            LoggingService.success("Removed all Firestore listeners", component: "Auth")
-            
-            // Remove auth state listener
-            if let handle = authStateHandle {
-                auth.removeStateDidChangeListener(handle)
-                authStateHandle = nil
-                LoggingService.success("Removed auth state listener", component: "Auth")
-            }
-            
-            // Clear local state on main actor
-            await MainActor.run {
-                self.appUser = nil
-                self.isAuthenticated = false
-                self.currentUser = nil
-            }
-            UserDefaults.standard.removeObject(forKey: "userId")
-            LoggingService.success("Cleared local state", component: "Auth")
-            
-            // Sign out from Firebase Auth
-            try auth.signOut()
-            LoggingService.success("Successfully signed out user", component: "Auth")
-            
-            // Wait a bit to ensure all queries are completed
-            try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            
-            // Terminate Firestore instance
-            try await firestore.terminate()
-            LoggingService.success("Terminated Firestore", component: "Auth")
-            
-            // Wait for termination to complete
-            try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            
-            // Clear Firestore persistence
-            try await firestore.clearPersistence()
-            LoggingService.success("Cleared Firestore persistence", component: "Auth")
-            
-            // Reinitialize Firestore
-            initializeFirestore()
-            LoggingService.success("Reinitialized Firestore", component: "Auth")
-            
-            // Re-setup auth state handler for next sign in
-            setupAuthStateHandler()
-            LoggingService.success("Re-initialized auth state handler", component: "Auth")
-        } catch {
-            LoggingService.error("Failed to sign out: \(error.localizedDescription)", component: "Auth")
-            throw AuthError.unknown(error)
+        LoggingService.authentication("Starting sign out process", component: "Auth")
+        
+        // Create cleanup group for coordinating cleanup tasks
+        let cleanupGroup = DispatchGroup()
+        cleanupGroup.enter()
+        
+        // Post notification to clean up video players with increased timeout
+        NotificationCenter.default.post(
+            name: .init("CleanupVideoPlayers"),
+            object: nil,
+            userInfo: ["cleanupGroup": cleanupGroup]
+        )
+        LoggingService.success("Posted cleanup notification for video players", component: "Auth")
+        
+        // Wait for cleanup to complete with an increased timeout
+        let timeoutResult = cleanupGroup.wait(timeout: .now() + 5.0)
+        if timeoutResult == .timedOut {
+            LoggingService.warning("Video player cleanup timed out after 5 seconds", component: "Auth")
+        } else {
+            LoggingService.success("Video player cleanup completed successfully", component: "Auth")
         }
+        
+        // Remove all Firestore listeners first - safely handle any errors
+        for listener in activeListeners {
+            do {
+                listener.remove()
+                LoggingService.debug("Successfully removed a Firestore listener", component: "Auth")
+            } catch {
+                LoggingService.warning("Error removing Firestore listener: \(error.localizedDescription)", component: "Auth")
+                // Continue with other listeners even if one fails
+                continue
+            }
+        }
+        activeListeners.removeAll()
+        LoggingService.success("Completed Firestore listener cleanup", component: "Auth")
+        
+        // Remove auth state listener
+        if let handle = authStateHandle {
+            auth.removeStateDidChangeListener(handle)
+            authStateHandle = nil
+            LoggingService.success("Removed auth state listener", component: "Auth")
+        }
+        
+        // Clear local state
+        await MainActor.run {
+            self.appUser = nil
+            self.isAuthenticated = false
+            self.currentUser = nil
+            LoggingService.success("Cleared local authentication state", component: "Auth")
+        }
+        
+        do {
+            // Sign out from Firebase - this should work even if user was deleted
+            try auth.signOut()
+            LoggingService.success("Successfully signed out from Firebase", component: "Auth")
+            
+            // Clear user defaults
+            UserDefaults.standard.removeObject(forKey: "userId")
+            LoggingService.success("Cleared user defaults", component: "Auth")
+            
+        } catch {
+            // Log the error but don't throw since we've already cleaned up local state
+            LoggingService.error("Error during Firebase sign out: \(error.localizedDescription)", component: "Auth")
+            // We still want to clear user defaults even if Firebase sign out fails
+            UserDefaults.standard.removeObject(forKey: "userId")
+            LoggingService.success("Cleared user defaults despite sign out error", component: "Auth")
+        }
+        
+        LoggingService.authentication("Sign out process completed", component: "Auth")
     }
     
     func resetPassword(email: String) async throws {

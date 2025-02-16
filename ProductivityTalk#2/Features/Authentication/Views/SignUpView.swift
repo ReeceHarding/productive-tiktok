@@ -196,11 +196,6 @@ struct SignUpView: View {
             }
             .fullScreenCover(isPresented: $viewModel.isAuthenticated) {
                 MainTabView()
-                    .overlay {
-                        if !OnboardingState.load().hasCompletedOnboarding {
-                            OnboardingView(viewModel: OnboardingViewModel())
-                        }
-                    }
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 if newPhase == .active {

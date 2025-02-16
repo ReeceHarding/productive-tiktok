@@ -32,9 +32,21 @@ private extension Dictionary where Key == String, Value == SendableValue {
 }
 
 @MainActor
-public class VideoPlayerViewModel: ObservableObject {
-    // Static property to track currently playing video
+public class VideoPlayerViewModel: ObservableObject, Hashable {
+    // Static property to track currently playing video and prevent multiple instances
     private static var currentlyPlayingViewModel: VideoPlayerViewModel?
+    private static var activeViewModels: Set<VideoPlayerViewModel> = []
+    
+    // MARK: - Hashable Conformance
+    public static func == (lhs: VideoPlayerViewModel, rhs: VideoPlayerViewModel) -> Bool {
+        // Two view models are equal if they represent the same video
+        lhs.video.id == rhs.video.id
+    }
+    
+    public func hash(into hasher: inout Hasher) {
+        // Hash only the video ID since that's what we use for equality
+        hasher.combine(video.id)
+    }
     
     @Published public var video: Video
     @Published public var player: AVPlayer?
@@ -73,10 +85,15 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private var documentListener: ListenerRegistration?
     
+    private var hasIncrementedViewCount = false
+    
     public init(video: Video) {
         self.video = video
         self.brainCount = video.brainCount
         LoggingService.video("Initialized player for video \(video.id)", component: "Player")
+        
+        // Add to active view models
+        Self.activeViewModels.insert(self)
         
         // Configure audio session
         do {
@@ -98,7 +115,8 @@ public class VideoPlayerViewModel: ObservableObject {
         )
         
         // Check if video is in user's second brain
-        Task {
+        Task { [weak self] in
+            guard let self = self else { return }
             do {
                 try await checkSecondBrainStatus()
             } catch {
@@ -127,7 +145,10 @@ public class VideoPlayerViewModel: ObservableObject {
         // Set up new listener
         let docRef = firestore.collection("videos").document(video.id)
         documentListener = docRef.addSnapshotListener { [weak self] snapshot, error in
-            guard let self = self else { return }
+            guard let self = self else {
+                LoggingService.debug("VideoPlayerViewModel was deallocated during snapshot update", component: "Player")
+                return
+            }
             
             if let error = error {
                 LoggingService.error("Error listening to video \(self.video.id) updates: \(error.localizedDescription)", component: "Player")
@@ -141,14 +162,19 @@ public class VideoPlayerViewModel: ObservableObject {
             }
             
             // Update video model
-            Task { @MainActor in
-                let oldStatus = self.video.processingStatus
-                self.video = updatedVideo
-                
-                // If status changed to ready, attempt to load the video
-                if oldStatus != .ready && updatedVideo.processingStatus == .ready {
-                    LoggingService.video("Video \(self.video.id) is now ready, loading video...", component: "Player")
-                    await self.loadVideo()
+            Task { [weak self] in
+                guard let self = self else { return }
+                await MainActor.run {
+                    let oldStatus = self.video.processingStatus
+                    self.video = updatedVideo
+                    
+                    // If status changed to ready, attempt to load the video
+                    if oldStatus != .ready && updatedVideo.processingStatus == .ready {
+                        LoggingService.video("Video \(self.video.id) is now ready, loading video...", component: "Player")
+                        Task {
+                            await self.loadVideo()
+                        }
+                    }
                 }
             }
         }
@@ -194,131 +220,101 @@ public class VideoPlayerViewModel: ObservableObject {
     @MainActor
     public func cleanup() async {
         if isCleaningUp {
+            LoggingService.debug("Cleanup already in progress for video: \(video.id)", component: "Player")
             return
         }
         isCleaningUp = true
         
-        // Invalidate observers - this is thread-safe
-        observers.forEach { $0.invalidate() }
-        observers.removeAll()
+        LoggingService.debug("Starting cleanup for video: \(video.id)", component: "Player")
         
-        bufferingObserver?.invalidate()
-        bufferingObserver = nil
-        
-        loadingObserver?.invalidate()
-        loadingObserver = nil
-        
-        // Remove time observer
-        if let token = timeObserverToken, let player = player {
-            player.removeTimeObserver(token)
-            timeObserverToken = nil
+        // Safely remove document listener
+        if let listener = documentListener {
+            listener.remove()
+            documentListener = nil
+            LoggingService.debug("Removed document listener for video: \(video.id)", component: "Player")
         }
         
-        // Clean up player
+        // Cancel any existing tasks
+        fadeTask?.cancel()
+        fadeInTask?.cancel()
+        fadeTask = nil
+        fadeInTask = nil
+        LoggingService.debug("Cancelled fade tasks for video: \(video.id)", component: "Player")
+        
+        // Remove notification observers
+        NotificationCenter.default.removeObserver(self)
+        LoggingService.debug("Removed notification observers for video: \(video.id)", component: "Player")
+        
+        // Safely invalidate observers
+        for observer in observers {
+            observer.invalidate()
+            LoggingService.debug("Invalidated observer for video: \(video.id)", component: "Player")
+        }
+        observers.removeAll()
+        
+        if let observer = bufferingObserver {
+            observer.invalidate()
+            bufferingObserver = nil
+            LoggingService.debug("Invalidated buffering observer for video: \(video.id)", component: "Player")
+        }
+        
+        if let observer = loadingObserver {
+            observer.invalidate()
+            loadingObserver = nil
+            LoggingService.debug("Invalidated loading observer for video: \(video.id)", component: "Player")
+        }
+        
+        // Clear player
         if let player = player {
+            if let token = timeObserverToken {
+                player.removeTimeObserver(token)
+                timeObserverToken = nil
+                LoggingService.debug("Removed time observer for video: \(video.id)", component: "Player")
+            }
+            player.pause()
+            player.replaceCurrentItem(with: nil)
+            self.player = nil
+            LoggingService.debug("Cleared player for video: \(video.id)", component: "Player")
+        }
+        
+        // Clear preloaded players
+        for (_, player) in preloadedPlayers {
             player.pause()
             player.replaceCurrentItem(with: nil)
         }
-        player = nil
-        isPlaying = false
+        preloadedPlayers.removeAll()
+        LoggingService.debug("Cleared preloaded players for video: \(video.id)", component: "Player")
         
         isCleaningUp = false
-        LoggingService.debug("Cleaned up player resources", component: "Player")
+        LoggingService.debug("Completed cleanup for video: \(video.id)", component: "Player")
     }
     
     deinit {
-        // Create a detached task to handle cleanup on the main actor
         Task { @MainActor in
-            LoggingService.debug("Starting deinit for video: \(video.id)", component: "Player")
+            let videoId = self.video.id
+            LoggingService.debug("VideoPlayerViewModel deinit started for video: \(videoId)", component: "Player")
             
-            // Remove document listener first
-            documentListener?.remove()
-            documentListener = nil
+            // Remove from active view models
+            Self.activeViewModels.remove(self)
             
-            // Cancel any existing tasks
-            fadeTask?.cancel()
-            fadeInTask?.cancel()
-            fadeTask = nil
-            fadeInTask = nil
+            // Execute cleanup synchronously to ensure it completes
+            await cleanup()
             
-            // Remove notification observer
-            NotificationCenter.default.removeObserver(
-                self,
-                name: .init("CleanupVideoPlayers"),
-                object: nil
-            )
+            // Execute deinit handler if it exists
+            self.deinitHandler?()
+            self.deinitHandler = nil
             
-            // Capture values while on MainActor
-            let videoId = video.id
-            let playerCopy = player
-            let observersCopy = observers
-            let bufferingObserverCopy = bufferingObserver
-            let loadingObserverCopy = loadingObserver
-            let timeObserverTokenCopy = timeObserverToken
-            let notificationRequestIdsCopy = notificationRequestIds
+            // Clear all references that might cause retain cycles
+            self.player = nil
+            self.observers.removeAll()
+            self.bufferingObserver = nil
+            self.loadingObserver = nil
+            self.documentListener = nil
+            self.timeObserverToken = nil
+            self.preloadedPlayers.removeAll()
             
-            // Clear references while on MainActor
-            player = nil
-            observers.removeAll()
-            bufferingObserver = nil
-            loadingObserver = nil
-            timeObserverToken = nil
-            notificationRequestIds.removeAll()
-            
-            // Perform cleanup on a background thread
-            Task.detached {
-                // Cleanup player and observers
-                await VideoPlayerViewModel.syncCleanup(
-                    player: playerCopy,
-                    observers: observersCopy,
-                    bufferingObserver: bufferingObserverCopy,
-                    loadingObserver: loadingObserverCopy,
-                    timeObserverToken: timeObserverTokenCopy
-                )
-                
-                // Cleanup notifications
-                await VideoPlayerViewModel.syncRemoveNotification(notificationRequestIds: notificationRequestIdsCopy)
-            }
-            
-            LoggingService.debug("Completed deinit for video: \(videoId)", component: "Player")
+            LoggingService.debug("VideoPlayerViewModel deinit completed for video: \(videoId)", component: "Player")
         }
-    }
-    
-    // Make cleanup functions static to avoid actor isolation issues
-    private static func syncCleanup(
-        player: AVPlayer?,
-        observers: Set<NSKeyValueObservation>,
-        bufferingObserver: NSKeyValueObservation?,
-        loadingObserver: NSKeyValueObservation?,
-        timeObserverToken: Any?
-    ) async {
-        // Invalidate all observers first
-        observers.forEach { $0.invalidate() }
-        bufferingObserver?.invalidate()
-        loadingObserver?.invalidate()
-        
-        // Remove time observer and clean up player
-        if let token = timeObserverToken, let player = player {
-            player.removeTimeObserver(token)
-        }
-        
-        player?.pause()
-        player?.replaceCurrentItem(with: nil)
-        
-        // Deactivate audio session
-        do {
-            try await AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            LoggingService.debug("Audio session deactivated", component: "Player")
-        } catch {
-            LoggingService.error("Failed to deactivate audio session: \(error)", component: "Player")
-        }
-        
-        LoggingService.debug("Completed sync cleanup of player resources", component: "Player")
-    }
-    
-    private static func syncRemoveNotification(notificationRequestIds: Set<String>) async {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: Array(notificationRequestIds))
-        LoggingService.debug("Removed all notification requests", component: "Player")
     }
     
     public func loadVideo() async {
@@ -907,45 +903,26 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     @MainActor
-    private func updateVideoStats(data: [String: Any]) async throws {
-        let videoId = video.id
-        try await updateVideoData(videoId: videoId, data: data)
-    }
-    
-    nonisolated private func updateVideoData(videoId: String, data: [String: Any]) async throws {
-        await MainActor.run {
-            LoggingService.video("Updating video data for \(videoId)", component: "Player")
-        }
-        let firestore = Firestore.firestore()
-        
-        // Convert to Sendable dictionary type
-        let sendableData = data.mapValues { value -> Any in
-            if let value = value as? Date {
-                return Timestamp(date: value)
-            }
-            return value
-        }
-        
-        try await firestore.collection("videos").document(videoId).updateData(sendableData)
-        await MainActor.run {
-            LoggingService.video("Updated video data for \(videoId)", component: "Player")
-        }
-    }
-    
     private func updateSecondBrainStatus() async throws {
+        let videoId = video.id // Capture video.id on MainActor
+        let isInSecondBrainValue = isInSecondBrain // Capture isInSecondBrain on MainActor
+        
         let data: [String: SendableValue] = [
-            "isInSecondBrain": .bool(isInSecondBrain)
+            "isInSecondBrain": .bool(isInSecondBrainValue)
         ]
-        try await firestore.collection("videos").document(video.id).updateData(data.asDictionary)
+        
+        try await firestore.collection("videos").document(videoId).updateData(data.asDictionary)
     }
     
     private func prerollIfNeeded() async throws {
         guard let player = player else { return }
         let success = try await player.preroll(atRate: 1.0)
         if success {
-            LoggingService.video("Preroll complete for \(video.id)", component: "Player")
+            let videoId = await MainActor.run { video.id }
+            LoggingService.video("Preroll complete for \(videoId)", component: "Player")
         } else {
-            LoggingService.error("Preroll failed for \(video.id)", component: "Player")
+            let videoId = await MainActor.run { video.id }
+            LoggingService.error("Preroll failed for \(videoId)", component: "Player")
             throw NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Preroll failed"])
         }
     }
@@ -968,10 +945,55 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     private func incrementViewCount() async throws {
-        let data: [String: Any] = [
-            "viewCount": video.viewCount + 1
-        ]
-        try await updateVideoStats(data: data)
+        guard !hasIncrementedViewCount else {
+            LoggingService.debug("View count already incremented for video \(video.id)", component: "Player")
+            return
+        }
+        
+        // Check if another instance has already incremented the view count
+        if Self.activeViewModels.contains(where: { $0 !== self && $0.video.id == video.id && $0.hasIncrementedViewCount }) {
+            LoggingService.debug("View count already incremented by another instance for video \(video.id)", component: "Player")
+            return
+        }
+        
+        LoggingService.video("Incrementing view count for video \(video.id)", component: "Player")
+        
+        do {
+            // Use a transaction to ensure atomic update
+            try await firestore.runTransaction { [videoId = video.id] (transaction, errorPointer) -> Any? in
+                do {
+                    let videoRef = self.firestore.collection("videos").document(videoId)
+                    let videoDoc = try transaction.getDocument(videoRef)
+                    
+                    guard videoDoc.exists else {
+                        let error = NSError(domain: "VideoPlayer", code: -1, userInfo: [NSLocalizedDescriptionKey: "Video document not found"])
+                        errorPointer?.pointee = error
+                        return nil
+                    }
+                    
+                    transaction.updateData([
+                        "viewCount": FieldValue.increment(Int64(1)),
+                        "updatedAt": FieldValue.serverTimestamp()
+                    ], forDocument: videoRef)
+                    
+                    return true
+                } catch {
+                    errorPointer?.pointee = error as NSError
+                    return nil
+                }
+            }
+            
+            hasIncrementedViewCount = true
+            LoggingService.video("Successfully incremented view count for video \(video.id)", component: "Player")
+            
+            // Update local state
+            await MainActor.run {
+                video.viewCount += 1
+            }
+        } catch {
+            LoggingService.error("Failed to increment view count for video \(video.id): \(error.localizedDescription)", component: "Player")
+            throw error
+        }
     }
     
     // MARK: - Notification Methods
@@ -993,32 +1015,15 @@ public class VideoPlayerViewModel: ObservableObject {
         LoggingService.debug("Removed all notification requests", component: "Player")
     }
     
-    private func cleanupPlayer() {
-        LoggingService.debug("🧹 Cleaning up player resources", component: "Player")
-        player?.pause()
-        player?.replaceCurrentItem(with: nil)
-        player = nil
-        NotificationCenter.default.removeObserver(self)
-        isCleaningUp = true
-    }
-    
-    @objc private func handleCleanupNotification() {
-        LoggingService.debug("🧹 Received cleanup notification for video \(video.id)", component: "Player")
-        Task { @MainActor in
-            // Pause playback first
-            await pausePlayback()
-            
-            // Then perform cleanup
+    @objc private func handleCleanupNotification(_ notification: Notification) {
+        LoggingService.debug("Received cleanup notification for video: \(video.id)", component: "Player")
+        
+        let cleanupGroup = notification.userInfo?["cleanupGroup"] as? DispatchGroup
+        
+        Task {
             await cleanup()
-            
-            // Remove notification observer
-            NotificationCenter.default.removeObserver(
-                self,
-                name: .init("CleanupVideoPlayers"),
-                object: nil
-            )
-            
-            LoggingService.success("✅ Completed cleanup for video \(video.id)", component: "Player")
+            cleanupGroup?.leave()
+            LoggingService.debug("Cleanup notification handled for video: \(video.id)", component: "Player")
         }
     }
 } 

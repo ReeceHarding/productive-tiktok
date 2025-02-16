@@ -268,11 +268,20 @@ actor VideoProcessingService {
                 return
             }
             
-            // Calculate progress
+            // Calculate progress with safety checks
             let completed = Double(progress.completedUnitCount)
             let total = Double(progress.totalUnitCount)
+            
+            // Safety check for valid progress calculation
+            guard total > 0, completed >= 0, completed <= total else {
+                LoggingService.error("❌ Invalid progress values: completed=\(completed), total=\(total)", component: "Storage")
+                return
+            }
+            
             let progressRatio = completed / total
-            let percentComplete = Int(progressRatio * 100.0)
+            // Ensure progress is between 0 and 1
+            let safeProgressRatio = max(0, min(1, progressRatio))
+            let percentComplete = Int(safeProgressRatio * 100.0)
             
             // Only report if progress has changed
             if percentComplete != lastReportedProgress {
@@ -301,21 +310,19 @@ actor VideoProcessingService {
                     component: "Storage"
                 )
                 
-                // Calculate and log transfer rate
-                if progress.completedUnitCount > 0 {
-                    if let throughput = progress.throughput {
-                        let bytesPerSecond: Int64 = Int64(Double(progress.completedUnitCount) / Double(throughput))
-                        let transferRate = ByteCountFormatter.string(
-                            fromByteCount: bytesPerSecond,
-                            countStyle: .file
-                        ) + "/s"
-                        LoggingService.debug("⚡️ Transfer rate: \(transferRate)", component: "Storage")
-                    }
+                // Calculate and log transfer rate with safety checks
+                if progress.completedUnitCount > 0, let throughput = progress.throughput, throughput > 0 {
+                    let bytesPerSecond = Int64(Double(progress.completedUnitCount) / Double(throughput))
+                    let transferRate = ByteCountFormatter.string(
+                        fromByteCount: bytesPerSecond,
+                        countStyle: .file
+                    ) + "/s"
+                    LoggingService.debug("⚡️ Transfer rate: \(transferRate)", component: "Storage")
                 }
                 
-                // Call progress callback
-                LoggingService.progress("Video upload", progress: Double(percentComplete) / 100.0, component: filename)
-                onProgress?(Double(percentComplete) / 100.0)
+                // Call progress callback with safe progress value
+                LoggingService.progress("Video upload", progress: safeProgressRatio, component: filename)
+                onProgress?(safeProgressRatio)
                 
                 lastReportedProgress = percentComplete
                 
