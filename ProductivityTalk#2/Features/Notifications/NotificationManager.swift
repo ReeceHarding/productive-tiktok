@@ -7,9 +7,9 @@ import OSLog
  
  Thoroughly logs each operation for clarity.
  */
-class NotificationManager: ObservableObject {
+public class NotificationManager: ObservableObject {
     
-    static let shared = NotificationManager()
+    public static let shared = NotificationManager()
     
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.productivitytalk", category: "NotificationManager")
     
@@ -21,7 +21,7 @@ class NotificationManager: ObservableObject {
      Request local notification authorization if not already granted.
      - Completion returns a Bool: `true` if authorized, `false` otherwise.
      */
-    func requestAuthorizationIfNeeded(completion: @escaping (Bool) -> Void) {
+    public func requestAuthorizationIfNeeded(completion: @escaping (Bool) -> Void) {
         logger.debug("Requesting local notification authorization if needed.")
         
         let current = UNUserNotificationCenter.current()
@@ -59,7 +59,7 @@ class NotificationManager: ObservableObject {
      - Parameter message: The short text to display in the notification
      - Parameter videoId: (Optional) Ties back to a particular video. Could be used for future expansions or to open a certain screen.
      */
-    func scheduleNotification(at date: Date, message: String, videoId: String? = nil) {
+    public func scheduleNotification(at date: Date, message: String, videoId: String? = nil) {
         logger.debug("Scheduling notification at \(date) with message: \(message)")
         
         // Create content

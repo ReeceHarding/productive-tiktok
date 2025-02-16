@@ -459,15 +459,15 @@ extension VideoUploadView {
                 .padding(.vertical, 8)
 
                 HStack(spacing: 12) {
-                    StatLabel(count: video.viewCount, icon: "eye.fill", label: "Views")
                     StatLabel(count: video.likeCount, icon: "hand.thumbsup.fill", label: "Likes")
-                    StatLabel(count: video.commentCount, icon: "text.bubble.fill", label: "Comments")
+                    StatLabel(icon: "text.bubble.fill", label: "Comments")
                     StatLabel(count: video.saveCount, icon: "bookmark.fill", label: "Saves")
                 }
                 .padding(.horizontal, 12)
 
-                if video.viewCount > 0 {
-                    Text("Engagement Rate: \(engagementRate)%")
+                // Calculate engagement rate without showing view count
+                if video.likeCount > 0 || video.commentCount > 0 || video.saveCount > 0 {
+                    Text("Engagement: \(engagementRate)%")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 12)
@@ -525,20 +525,28 @@ extension VideoUploadView {
         
         private var engagementRate: String {
             let totalEngagements = video.likeCount + video.commentCount + video.saveCount
-            let rate = Double(totalEngagements) / Double(max(1, video.viewCount)) * 100
+            // Calculate engagement score (0-100) based on total engagements
+            // Using a logarithmic scale: score = min(100, 20 * ln(1 + totalEngagements))
+            let rate = min(100.0, 20.0 * log(1.0 + Double(totalEngagements)))
             return String(format: "%.1f", rate)
         }
     }
     
     private struct StatLabel: View {
-        let count: Int
+        let count: Int?
         let icon: String
         let label: String
         
         @State private var showTooltip = false
         
+        init(count: Int? = nil, icon: String, label: String) {
+            self.count = count
+            self.icon = icon
+            self.label = label
+        }
+        
         var body: some View {
-            Label("\(count)", systemImage: icon)
+            Label(count.map { "\($0)" } ?? "", systemImage: icon)
                 .font(.footnote)
                 .foregroundColor(.secondary)
                 .onTapGesture {
@@ -548,9 +556,11 @@ extension VideoUploadView {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(label)
                             .font(.headline)
-                        Text("Total \(label.lowercased()): \(count)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        if let count = count {
+                            Text("Total \(label.lowercased()): \(count)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                     .padding()
                 }

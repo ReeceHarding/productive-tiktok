@@ -5,14 +5,14 @@ import OSLog
  LoggingService provides a consistent logging interface across the app.
  It uses OSLog for efficient logging and supports different log levels and components.
  */
-enum LoggingService {
+public enum LoggingService {
     private static let subsystem = Bundle.main.bundleIdentifier ?? "com.productivitytalk"
     
     private static let logger = Logger(subsystem: subsystem, category: "App")
     
     // MARK: - Standard Logging
     
-    static func debug(_ message: String, component: String) {
+    public static func debug(_ message: String, component: String) {
         logger.debug("[\(component)] \(message)")
         #if DEBUG
         print("[\(component)] 🔍 \(message)")

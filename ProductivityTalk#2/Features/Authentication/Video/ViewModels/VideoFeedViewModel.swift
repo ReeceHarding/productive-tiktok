@@ -28,6 +28,14 @@ public class VideoFeedViewModel: ObservableObject {
     public init() {
         preloadQueue.maxConcurrentOperationCount = 2
         LoggingService.video("Initialized with preload window of \(preloadWindow)", component: "Feed")
+        
+        // Add cleanup notification observer
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleCleanupNotification),
+            name: .init("CleanupVideoPlayers"),
+            object: nil
+        )
     }
     
     deinit {
@@ -35,6 +43,42 @@ public class VideoFeedViewModel: ObservableObject {
         for (videoId, listener) in videoListeners {
             LoggingService.debug("Removing video listener for video \(videoId)", component: "Feed")
             listener.remove()
+        }
+        
+        // Remove notification observer
+        NotificationCenter.default.removeObserver(
+            self,
+            name: .init("CleanupVideoPlayers"),
+            object: nil
+        )
+    }
+    
+    @objc private func handleCleanupNotification() {
+        LoggingService.debug("🧹 Received cleanup notification for feed", component: "Feed")
+        Task { @MainActor in
+            // Cancel all preload tasks
+            for (_, task) in preloadTasks {
+                task.cancel()
+            }
+            preloadTasks.removeAll()
+            
+            // Clean up all player view models
+            for (_, viewModel) in playerViewModels {
+                await viewModel.cleanup()
+            }
+            playerViewModels.removeAll()
+            
+            // Remove all video listeners
+            for (videoId, listener) in videoListeners {
+                LoggingService.debug("Removing video listener for video \(videoId)", component: "Feed")
+                listener.remove()
+            }
+            videoListeners.removeAll()
+            
+            // Clear videos array
+            videos.removeAll()
+            
+            LoggingService.success("✅ Completed feed cleanup", component: "Feed")
         }
     }
     

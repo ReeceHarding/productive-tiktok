@@ -89,11 +89,10 @@ actor VideoProcessingService {
                     .updateData([
                         "videoURL": videoDownloadURL,
                         "thumbnailURL": "",  // No thumbnail needed
-                        "processingStatus": VideoProcessingStatus.ready.rawValue,
                         "updatedAt": FieldValue.serverTimestamp()
                     ] as [String: Any])
                 
-                LoggingService.success("✅ Updated video document with URL and ready status", component: "Processing")
+                LoggingService.success("✅ Updated video document with URL (waiting for Cloud Function processing)", component: "Processing")
             } catch {
                 LoggingService.error("❌ Failed to update video document: \(error)", component: "Processing")
                 throw error

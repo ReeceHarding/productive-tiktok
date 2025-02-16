@@ -1,8 +1,10 @@
 import SwiftUI
-import OSLog
-import UIKit
+import Foundation
+import os
+
 #if os(iOS)
 import UserNotifications
+import UIKit
 #endif
 
 /**
@@ -17,21 +19,25 @@ struct VideoNotificationSetupView: View {
     let videoId: String
     let originalTranscript: String
     
-    @State private var proposedMessage: String = ""
-    @State private var proposedDate: Date = Date()
-    @State private var isLoading = false
-    @State private var errorMessage: String?
-    
-    // For logging
-    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.productivitytalk", category: "VideoNotificationSetup")
-    
-    // Access managers
     @StateObject private var notificationManager = NotificationManager.shared
+    @State private var message: String = ""
+    @State private var selectedTime: Date = Date()
+    @State private var isGeneratingProposal = false
+    @State private var showError = false
+    @State private var errorMessage = ""
+    @Environment(\.dismiss) var dismiss
+    
+    init(videoId: String, originalTranscript: String) {
+        self.videoId = videoId
+        self.originalTranscript = originalTranscript
+        LoggingService.debug("🔔 Initializing notification setup for video \(videoId)", component: "NotificationSetup")
+        LoggingService.debug("📝 Transcript length: \(originalTranscript.count) characters", component: "NotificationSetup")
+    }
     
     var body: some View {
         NavigationView {
             Form {
-                if let errorMessage = errorMessage {
+                if showError {
                     Section {
                         Text(errorMessage)
                             .foregroundColor(.red)
@@ -39,19 +45,41 @@ struct VideoNotificationSetupView: View {
                 }
                 
                 Section(header: Text("Notification Message")) {
-                    TextField("Enter your reminder", text: $proposedMessage)
+                    TextField("Enter your reminder", text: $message)
+                        .onChange(of: message) { newValue in
+                            LoggingService.debug("User edited message to: \(newValue)", component: "NotificationSetup")
+                        }
                 }
                 
                 Section(header: Text("Time")) {
-                    DatePicker("Choose Time", selection: $proposedDate, displayedComponents: .hourAndMinute)
+                    DatePicker("Choose Time", selection: $selectedTime, displayedComponents: .hourAndMinute)
+                        #if os(iOS)
+                        .datePickerStyle(.wheel)
+                        #else
+                        .datePickerStyle(.graphical)
+                        #endif
+                        .onChange(of: selectedTime) { newValue in
+                            LoggingService.debug("User selected new time: \(newValue)", component: "NotificationSetup")
+                        }
                 }
                 
                 Section {
                     Button(action: {
-                        scheduleTapped()
+                        LoggingService.debug("Schedule button tapped", component: "NotificationSetup")
+                        Task {
+                            await scheduleTapped()
+                        }
                     }) {
-                        Text("Schedule Notification")
+                        HStack {
+                            Text("Schedule Notification")
+                            if isGeneratingProposal {
+                                Spacer()
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
+                        }
                     }
+                    .disabled(isGeneratingProposal)
                 }
             }
             .navigationTitle("Set Notification")
@@ -60,83 +88,85 @@ struct VideoNotificationSetupView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
-                        dismissView()
+                        LoggingService.debug("Cancel button tapped", component: "NotificationSetup")
+                        dismiss()
                     }
                 }
             }
             #endif
-            .overlay {
-                if isLoading {
-                    ZStack {
-                        Color.black.opacity(0.3)
-                            .ignoresSafeArea()
-                        ProgressView("Loading...")
-                            .scaleEffect(1.2)
-                            .padding()
-                            .background(Color.white.opacity(0.9))
-                            .cornerRadius(12)
-                    }
-                }
-            }
-        }
-        .task {
-            await generateProposalIfNeeded()
-        }
-    }
-    
-    private func dismissView() {
-        logger.debug("Dismissing VideoNotificationSetupView.")
-        #if os(iOS)
-        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let root = scene.windows.first?.rootViewController {
-            root.dismiss(animated: true)
-        }
-        #endif
-    }
-    
-    private func scheduleTapped() {
-        logger.debug("User tapped schedule with message='\(proposedMessage)', date=\(proposedDate)")
-        isLoading = true
-        // Make sure we have permission
-        notificationManager.requestAuthorizationIfNeeded { (granted: Bool) in
-            DispatchQueue.main.async {
-                self.isLoading = false
-                if granted {
-                    self.notificationManager.scheduleNotification(at: self.proposedDate, message: self.proposedMessage, videoId: self.videoId)
-                    self.logger.info("Notification scheduled. Dismissing setup view.")
-                    self.dismissView()
-                } else {
-                    self.logger.warning("User did not grant local notification permission.")
-                    self.errorMessage = "Please enable notifications in Settings."
-                }
+            .onAppear {
+                LoggingService.debug("🎬 NotificationSetupView appeared for video \(videoId)", component: "NotificationSetup")
+                generateProposalIfNeeded()
             }
         }
     }
     
-    // Retrieve GPT proposal if needed
-    private func generateProposalIfNeeded() async {
-        guard proposedMessage.isEmpty else {
-            logger.debug("Proposal already populated. Skipping GPT call.")
+    private func scheduleTapped() async {
+        LoggingService.debug("🕐 Scheduling notification for video \(videoId) at \(selectedTime)", component: "NotificationSetup")
+        
+        guard !message.isEmpty else {
+            LoggingService.error("❌ Cannot schedule - message is empty", component: "NotificationSetup")
+            errorMessage = "Please enter a notification message"
+            showError = true
             return
         }
-        logger.debug("Fetching GPT-based proposal for transcript of length: \(originalTranscript.count).")
-        isLoading = true
-        do {
-            let (message, recommendedTime) = try await NotificationLLMService.shared.generateNotificationProposal(transcript: originalTranscript)
-            DispatchQueue.main.async {
-                self.proposedMessage = message
-                self.proposedDate = recommendedTime
-                self.isLoading = false
+        
+        await MainActor.run { isGeneratingProposal = true }
+        
+        Task {
+            do {
+                try await notificationManager.requestAuthorizationIfNeeded { granted in
+                    if !granted {
+                        Task { @MainActor in
+                            self.errorMessage = "Notification permissions not granted"
+                            self.showError = true
+                            self.isGeneratingProposal = false
+                        }
+                        return
+                    }
+                }
+                try await notificationManager.scheduleNotification(
+                    at: selectedTime,
+                    message: message,
+                    videoId: videoId
+                )
+                LoggingService.success("✅ Successfully scheduled notification", component: "NotificationSetup")
+                dismiss()
+            } catch {
+                LoggingService.error("❌ Failed to schedule notification: \(error.localizedDescription)", component: "NotificationSetup")
+                errorMessage = error.localizedDescription
+                showError = true
             }
-            logger.debug("Got GPT proposal => \(message), date=\(recommendedTime)")
-        } catch {
-            logger.error("Failed GPT call for notification. \(error.localizedDescription)")
-            DispatchQueue.main.async {
-                self.isLoading = false
-                self.errorMessage = "Could not generate a recommended notification. You can still edit manually."
-                // Provide fallback
-                self.proposedMessage = "Your reminder from the video!"
-                self.proposedDate = Date().addingTimeInterval(60*60*8) // 8 hours from now
+        }
+    }
+    
+    private func generateProposalIfNeeded() {
+        guard message.isEmpty else {
+            LoggingService.debug("⏭️ Skipping proposal generation - message already set", component: "NotificationSetup")
+            return
+        }
+        
+        LoggingService.debug("🤖 Starting proposal generation for video \(videoId)", component: "NotificationSetup")
+        isGeneratingProposal = true
+        
+        Task {
+            do {
+                let (proposedMessage, proposedTime) = try await NotificationLLMService.shared.generateNotificationProposal(
+                    transcript: originalTranscript
+                )
+                await MainActor.run {
+                    message = proposedMessage
+                    selectedTime = proposedTime
+                    isGeneratingProposal = false
+                }
+                LoggingService.success("✅ Generated notification proposal: \(proposedMessage)", component: "NotificationSetup")
+            } catch {
+                LoggingService.error("❌ Failed to generate proposal: \(error.localizedDescription)", component: "NotificationSetup")
+                await MainActor.run {
+                    isGeneratingProposal = false
+                    errorMessage = "Failed to generate notification message. Please try again or enter your own message."
+                    showError = true
+                }
             }
         }
     }

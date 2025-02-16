@@ -76,6 +76,14 @@ public class VideoPlayerViewModel: ObservableObject {
         self.brainCount = video.brainCount
         LoggingService.video("Initialized player for video \(video.id)", component: "Player")
         
+        // Add cleanup notification observer
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleCleanupNotification),
+            name: .init("CleanupVideoPlayers"),
+            object: nil
+        )
+        
         // Check if video is in user's second brain
         Task {
             do {
@@ -135,7 +143,7 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     @MainActor
-    private func cleanup() async {
+    public func cleanup() async {
         if isCleaningUp {
             return
         }
@@ -422,8 +430,8 @@ public class VideoPlayerViewModel: ObservableObject {
         isPlaying = true
         
         // Re-apply fade in if not muted
-        Task { @MainActor in
-            try? await fadeInAudio()
+        Task { [weak self] in
+            try? await self?.fadeInAudio()
         }
     }
     
@@ -838,5 +846,34 @@ public class VideoPlayerViewModel: ObservableObject {
     nonisolated private func syncRemoveNotification(notificationRequestIds: Set<String>) {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: Array(notificationRequestIds))
         LoggingService.debug("Removed all notification requests", component: "Player")
+    }
+    
+    private func cleanupPlayer() {
+        LoggingService.debug("🧹 Cleaning up player resources", component: "Player")
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        player = nil
+        NotificationCenter.default.removeObserver(self)
+        isCleaningUp = true
+    }
+    
+    @objc private func handleCleanupNotification() {
+        LoggingService.debug("🧹 Received cleanup notification for video \(video.id)", component: "Player")
+        Task { @MainActor in
+            // Pause playback first
+            await pausePlayback()
+            
+            // Then perform cleanup
+            await cleanup()
+            
+            // Remove notification observer
+            NotificationCenter.default.removeObserver(
+                self,
+                name: .init("CleanupVideoPlayers"),
+                object: nil
+            )
+            
+            LoggingService.success("✅ Completed cleanup for video \(video.id)", component: "Player")
+        }
     }
 } 

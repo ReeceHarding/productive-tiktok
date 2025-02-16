@@ -7,6 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const FormData = require("form-data");
+const crypto = require("crypto");
 
 // Initialize the Admin SDK
 admin.initializeApp();
@@ -15,6 +16,53 @@ const storage = new Storage();
 // Ensure we have an API key
 if (!process.env.OPENAI_API_KEY) {
   console.error("⚠️ OPENAI_API_KEY environment variable is not set");
+}
+
+// Constants for URL signing
+const SECONDS_IN_DAY = 86400;
+const EXPIRATION_DAYS = 6; // Using 6 days instead of 7 for safety margin
+
+/**
+ * Generates a unique video ID based on filename and timestamp
+ * @param {string} filename The original filename
+ * @returns {string} A unique video ID
+ */
+function generateVideoId(filename) {
+  const timestamp = Date.now();
+  const randomBytes = crypto.randomBytes(4).toString("hex");
+  const sanitizedFilename = path.basename(filename).replace(/[^a-zA-Z0-9]/g, "_");
+  const uniqueId = `${sanitizedFilename}_${timestamp}_${randomBytes}`;
+  console.log(`🔑 Generated unique video ID: ${uniqueId}`);
+  return uniqueId;
+}
+
+/**
+ * Validates that a file is a video by checking its content type
+ * @param {Storage.Bucket} bucket The storage bucket
+ * @param {string} filePath The path to the file
+ * @returns {Promise<{isValid: boolean, metadata: object}>}
+ */
+async function validateVideoFile(bucket, filePath) {
+  try {
+    const [metadata] = await bucket.file(filePath).getMetadata();
+    const contentType = metadata.contentType || "";
+    const isVideo = contentType.startsWith("video/");
+    
+    if (!isVideo) {
+      console.error(`❌ Invalid content type: ${contentType}. Expected video/*`);
+      return {isValid: false, metadata};
+    }
+
+    console.log(`✅ Validated video file: ${filePath}`);
+    console.log(`📊 Content Type: ${contentType}`);
+    console.log(`📊 Size: ${metadata.size} bytes`);
+    console.log(`📊 Created: ${metadata.timeCreated}`);
+    
+    return {isValid: true, metadata};
+  } catch (error) {
+    console.error(`❌ Failed to validate video file: ${filePath}`, error);
+    return {isValid: false, metadata: null};
+  }
 }
 
 /**
@@ -38,38 +86,65 @@ exports.processVideo = onObjectFinalized({
     return;
   }
   
-  // Extract videoId from the filename (remove .mp4 extension)
-  const videoId = path.basename(fileName, ".mp4");
-  console.log(`Starting cloud function processing for video with ID: ${videoId}`);
-  
   const bucket = storage.bucket(event.data.bucket);
+  let videoId;
+  let tempFilePath;
+  let audioPath;
 
   try {
-    // 1) Mark Firestore doc as uploading (already done in the client)
-    // 2) Generate a signed URL for the video
+    // Validate the video file first
+    const {isValid, metadata} = await validateVideoFile(bucket, filePath);
+    if (!isValid) {
+      console.error("❌ File validation failed - not a valid video file");
+      return;
+    }
+
+    // Generate a unique video ID
+    videoId = generateVideoId(fileName);
+    console.log(`✅ Processing video with ID: ${videoId}`);
+    
+    // Create initial Firestore document
+    await admin
+      .firestore()
+      .collection("videos")
+      .doc(videoId)
+      .set({
+        originalFileName: fileName,
+        contentType: metadata.contentType,
+        size: metadata.size,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        processingStatus: "uploading"
+      });
+    console.log(`✅ Created initial Firestore document for video ${videoId}`);
+
+    // Generate a signed URL for the video
     console.log(`Generating signed URL for video: ${filePath}`);
+    const expirationTime = Date.now() + (SECONDS_IN_DAY * EXPIRATION_DAYS * 1000);
     const signedUrlConfig = {
       action: "read",
-      expires: "03-01-2500",
+      expires: expirationTime,
       version: "v4"
     };
+    console.log(`🕒 Generating signed URL with ${EXPIRATION_DAYS} days expiration`);
     const [signedUrl] = await bucket.file(filePath).getSignedUrl(signedUrlConfig);
     console.log(`✅ Generated signed URL: ${signedUrl}`);
 
-    // 3) Update Firestore with the signed URL
+    // Update Firestore with the signed URL and its expiration
     await admin
       .firestore()
       .collection("videos")
       .doc(videoId)
       .update({
         videoURL: signedUrl,
+        videoURLExpiration: admin.firestore.Timestamp.fromMillis(expirationTime),
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
-    console.log(`✅ Updated Firestore doc with signedURL for video ${videoId}`);
+    console.log(`✅ Updated Firestore doc with signedURL and expiration for video ${videoId}`);
 
-    // 4) Download the video to a temp folder so we can extract the audio
+    // Download the video to a temp folder so we can extract the audio
     console.log("Downloading video locally for audio extraction...");
-    const tempFilePath = path.join(os.tmpdir(), fileName);
+    tempFilePath = path.join(os.tmpdir(), fileName);
     await bucket.file(filePath).download({destination: tempFilePath});
     console.log("✅ Downloaded video locally:", tempFilePath);
 
@@ -85,7 +160,7 @@ exports.processVideo = onObjectFinalized({
     console.log(`🔄 Set processingStatus=transcribing for video ${videoId}`);
 
     // 5) Extract audio
-    const audioPath = path.join(os.tmpdir(), `${videoId}.mp3`);
+    audioPath = path.join(os.tmpdir(), `${videoId}.mp3`);
     await new Promise((resolve, reject) => {
       ffmpeg(tempFilePath)
         .toFormat("mp3")
@@ -108,12 +183,15 @@ exports.processVideo = onObjectFinalized({
     formData.append("response_format", "text");
     console.log("🗣️ Starting transcription with Whisper...");
 
+    // Get headers from FormData including the correct Content-Type with boundary
+    const formHeaders = formData.getHeaders();
+
     const response = await axios.post(
       "https://api.openai.com/v1/audio/transcriptions",
       formData,
       {
         headers: {
-          "Content-Type": "application/json",
+          ...formHeaders,
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
         maxBodyLength: Infinity,
@@ -303,24 +381,34 @@ exports.processVideo = onObjectFinalized({
       console.log(`🎉 processingStatus=ready for video ${videoId}`);
 
       // Also update secondBrain entries if they exist
-      const secondBrainQuery = await admin
-        .firestore()
-        .collectionGroup("secondBrain")
-        .where("videoId", "==", videoId)
-        .get();
-      
-      if (!secondBrainQuery.empty) {
-        const batch = admin.firestore().batch();
-        secondBrainQuery.docs.forEach((doc) => {
-          batch.update(doc.ref, {
-            quotes,
-            videoTitle: autoTitle,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      try {
+        const secondBrainQuery = await admin
+          .firestore()
+          .collectionGroup("secondBrain")
+          .where("videoId", "==", videoId)
+          .get();
+        
+        if (!secondBrainQuery.empty) {
+          const batch = admin.firestore().batch();
+          secondBrainQuery.docs.forEach((doc) => {
+            batch.update(doc.ref, {
+              quotes,
+              videoTitle: autoTitle,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
           });
-        });
-        await batch.commit();
-        console.log(`✅ Updated ${secondBrainQuery.docs.length} secondBrain entries for video ${videoId}`);
+          await batch.commit();
+          console.log(`✅ Updated ${secondBrainQuery.docs.length} secondBrain entries for video ${videoId}`);
+        }
+      } catch (secondBrainError) {
+        // Log the error but don't throw - this is a non-critical update
+        console.log(
+          `⚠️ Could not update secondBrain entries: ${secondBrainError.message}. ` +
+          "This is expected if the collection group index is not set up."
+        );
       }
+
+      console.log(`✨ All processing completed successfully for video ${videoId}`);
 
     } catch (contentErr) {
       console.error("Content generation failed:", contentErr);
@@ -342,23 +430,35 @@ exports.processVideo = onObjectFinalized({
       }
     }
 
-    // Cleanup
-    fs.unlinkSync(tempFilePath);
-    fs.unlinkSync(audioPath);
-    console.log("🧹 Cleaned up temporary files locally");
-
   } catch (error) {
     console.error("Error processing video:", error);
-    // Mark as error
+    // Mark as error if we have a videoId
+    if (videoId) {
+      try {
+        await admin.firestore().collection("videos").doc(videoId).update({
+          processingStatus: "error",
+          processingError: error.message || "Unknown error occurred",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log(`❌ Marked video ${videoId} as error with message: ${error.message}`);
+      } catch (updateError) {
+        console.error("Failed to update video doc after error:", updateError);
+      }
+    } else {
+      console.error("Could not update error status - no valid videoId");
+    }
+  } finally {
+    // Cleanup temporary files if they exist
     try {
-      await admin.firestore().collection("videos").doc(videoId).update({
-        processingStatus: "error",
-        processingError: error.message || "Unknown error occurred",
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-      console.log(`❌ Marked video ${videoId} as error with message: ${error.message}`);
-    } catch (updateError) {
-      console.error("Failed to update video doc after error:", updateError);
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+      }
+      if (audioPath && fs.existsSync(audioPath)) {
+        fs.unlinkSync(audioPath);
+      }
+      console.log("🧹 Cleaned up temporary files locally");
+    } catch (cleanupError) {
+      console.error("Error during cleanup:", cleanupError);
     }
   }
 });

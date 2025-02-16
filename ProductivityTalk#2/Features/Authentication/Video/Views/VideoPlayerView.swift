@@ -15,6 +15,7 @@ public struct VideoPlayerView: View {
     @State private var showError = false
     @State private var isVisible = false
     @State private var loadingProgress: Double = 0
+    @State private var showNotificationSetup = false
     
     init(video: Video) {
         self.video = video
@@ -66,7 +67,8 @@ public struct VideoPlayerView: View {
                 ControlsOverlay(
                     video: video,
                     viewModel: viewModel,
-                    showComments: $showComments
+                    showComments: $showComments,
+                    showNotificationSetup: $showNotificationSetup
                 )
                 .transition(.opacity.combined(with: .scale))
             }
@@ -139,6 +141,29 @@ public struct VideoPlayerView: View {
                 .presentationDragIndicator(.visible)
                 .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showNotificationSetup) {
+            if let transcript = viewModel.video.transcript {
+                VideoNotificationSetupView(videoId: video.id, originalTranscript: transcript)
+            } else {
+                VStack(spacing: 16) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 44))
+                        .foregroundStyle(.secondary)
+                    Text("Cannot Set Notification")
+                        .font(.headline)
+                    Text("The video is still processing. Please try again in a moment.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("OK", role: .cancel) {
+                        showNotificationSetup = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding()
+                .presentationDetents([.height(250)])
+            }
+        }
         .alert("Error", isPresented: $showError, presenting: errorMessage) { _ in
             Button("OK", role: .cancel) {}
         } message: { message in
@@ -204,6 +229,7 @@ private struct ControlsOverlay: View {
     let video: Video
     @ObservedObject var viewModel: VideoPlayerViewModel
     @Binding var showComments: Bool
+    @Binding var showNotificationSetup: Bool
 
     var body: some View {
         GeometryReader { geometry in
@@ -243,12 +269,14 @@ private struct ControlsOverlay: View {
                             text: "Remind",
                             isActive: viewModel.isSubscribedToNotifications
                         ) {
-                            LoggingService.debug("Bell icon tapped for video: \(video.id)", component: "Player")
-                            // This is the notification flow, not calendar
-                            viewModel.isSubscribedToNotifications.toggle()
-                            // Implementation of showing notification setup
-                            // or just open the VideoNotificationSetupView
-                            // (Left as is, user did not request removal of notifications)
+                            LoggingService.debug("Bell icon tapped for video: \(video.id), has transcript: \(viewModel.video.transcript != nil)", component: "Player")
+                            if viewModel.isSubscribedToNotifications {
+                                Task {
+                                    await viewModel.removeNotification()
+                                }
+                            } else {
+                                showNotificationSetup = true
+                            }
                         }
                     }
                     .padding(.trailing, geometry.size.width * 0.05)

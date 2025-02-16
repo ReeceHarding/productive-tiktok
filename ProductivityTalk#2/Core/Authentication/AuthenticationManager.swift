@@ -214,6 +214,13 @@ class AuthenticationManager: ObservableObject {
     func signOut() async throws {
         LoggingService.authentication("Attempting to sign out user", component: "Auth")
         do {
+            // Post notification to clean up video players
+            NotificationCenter.default.post(name: .init("CleanupVideoPlayers"), object: nil)
+            LoggingService.success("Posted cleanup notification for video players", component: "Auth")
+            
+            // Wait for cleanup to complete
+            try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            
             // Remove all Firestore listeners first
             activeListeners.forEach { $0.remove() }
             activeListeners.removeAll()

@@ -2,41 +2,41 @@ import Foundation
 import OSLog
 
 /**
- NotificationLLMService is responsible for calling GPT-4 to generate a short
+ NotificationLLMService is responsible for calling GPT-3.5 Turbo to generate a short
  notification message and a suggested time-of-day from a video transcript.
  
- - We rely on the user's OpenAI API key from APIConfig.shared.openAIKey
- - We parse the GPT-4 response to find:
-    "NotificationMessage:" <some short text>
-    "ProposedTime:" <24-hour format time, e.g. "07:00">
+ - We rely on the user's OpenAI API key from APIConfig.shared.openAIKey.
+ - We parse the GPT response to find:
+    "NotificationMessage:" <one-liner reminder>
+    "ProposedTime:" <HH:mm 24-hour format for suggested reminder time>
  
- Thoroughly logged to let devs see data in logs.
+ Thoroughly logs each operation for clarity.
  */
-actor NotificationLLMService {
+public actor NotificationLLMService {
     
-    static let shared = NotificationLLMService()
+    public static let shared = NotificationLLMService()
     
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.productivitytalk", category: "NotificationLLM")
     
     private init() {
-        logger.info("Initialized NotificationLLMService")
+        logger.info("Initialized NotificationLLMService with GPT-3.5 Turbo")
     }
     
     /**
      Generate a short notification proposal from a video transcript.
      
-     We'll ask GPT-4 to produce:
+     We'll ask GPT-3.5 Turbo to produce:
        1) A short (1-2 sentence) message to remind the user about the key idea.
        2) A recommended time-of-day in 24-hour format HH:mm, e.g. "07:00".
      
      The response lines we look for:
-       NotificationMessage: <some text>
+       NotificationMessage: <one-liner reminder>
        ProposedTime: <HH:mm>
      
-     If GPT-4 fails or doesn't provide, we default to 08:00.
+     If GPT fails or doesn't provide, we default to 08:00.
      
      - Parameter transcript: Full transcript text from the video
-     - Returns: (notificationMessage, recommendedDate), both unwrapped
+     - Returns: (notificationMessage, recommendedDate)
      */
     func generateNotificationProposal(transcript: String) async throws -> (String, Date) {
         logger.debug("Generating notification proposal with transcript of length: \(transcript.count) chars")
@@ -56,7 +56,7 @@ Transcript:
         
         // Prepare request JSON
         let requestData: [String: Any] = [
-            "model": "gpt-4",
+            "model": "gpt-3.5-turbo",
             "messages": [
                 ["role": "user", "content": prompt]
             ],
@@ -65,10 +65,11 @@ Transcript:
         ]
         
         let openAIKey = APIConfig.shared.openAIKey
+        
         guard let url = URL(string: "https://api.openai.com/v1/chat/completions") else {
-            let err = NSError(domain: "NotificationLLMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid OpenAI URL"])
-            logger.error("Failed with invalid URL")
-            throw err
+            throw NSError(domain: "NotificationLLMService",
+                         code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "Invalid OpenAI URL"])
         }
         
         var urlReq = URLRequest(url: url)
@@ -80,37 +81,32 @@ Transcript:
         urlReq.httpBody = bodyData
         
         let (data, response) = try await URLSession.shared.data(for: urlReq)
-        
-        // Validate status
         if let httpResp = response as? HTTPURLResponse,
            !(200...299).contains(httpResp.statusCode) {
             let bodyStr = String(data: data, encoding: .utf8) ?? "Unknown error"
-            logger.error("OpenAI call failed. Status: \(httpResp.statusCode) - \(bodyStr)")
+            logger.error("OpenAI call failed. Status: \(httpResp.statusCode), Body: \(bodyStr)")
             throw NSError(domain: "NotificationLLMService", code: httpResp.statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "OpenAI request failed: \(bodyStr)"])
+                         userInfo: [NSLocalizedDescriptionKey: "OpenAI call failed: \(bodyStr)"])
         }
         
-        // Parse JSON response
         guard let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = jsonObject["choices"] as? [[String: Any]],
               let firstChoice = choices.first,
-              let messageDict = firstChoice["message"] as? [String: Any],
-              let content = messageDict["content"] as? String else {
-            logger.error("Unable to parse GPT-4 response for notification proposal")
-            throw NSError(domain: "NotificationLLMService", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to parse GPT-4 notification message"])
+              let message = firstChoice["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw NSError(domain: "NotificationLLMService", code: -2,
+                         userInfo: [NSLocalizedDescriptionKey: "Failed to parse OpenAI chat response"])
         }
         
         logger.debug("Received raw GPT content: \(content)")
         
-        // Defaults
+        // Parse lines
         var finalMessage = "Reminder from your video!"
         var finalTimeStr = "08:00"
         
-        // Split lines
-        let lines = content.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let lines = content.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         for line in lines {
             let lower = line.lowercased()
-            // Remove numeric prefix and clean up the line
             let cleanedLine = line.replacingOccurrences(of: #"^\d+\)\s*"#, with: "", options: .regularExpression)
             if cleanedLine.lowercased().starts(with: "notificationmessage:") {
                 finalMessage = cleanedLine
@@ -130,7 +126,6 @@ Transcript:
         let now = Date()
         var components = calendar.dateComponents([.year, .month, .day], from: now)
         
-        // Fallback to 08:00 if parse fails
         let parts = finalTimeStr.components(separatedBy: ":")
         if parts.count == 2, let hour = Int(parts[0]), let minute = Int(parts[1]) {
             components.hour = hour
