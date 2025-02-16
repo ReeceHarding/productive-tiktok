@@ -77,6 +77,16 @@ public class VideoPlayerViewModel: ObservableObject {
         self.video = video
         self.brainCount = video.brainCount
         LoggingService.video("Initialized player for video \(video.id)", component: "Player")
+        
+        // Configure audio session
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+            LoggingService.debug("Audio session configured successfully", component: "Player")
+        } catch {
+            LoggingService.error("Failed to configure audio session: \(error)", component: "Player")
+        }
+        
         setupDocumentListener()
         
         // Add cleanup notification observer
@@ -295,6 +305,14 @@ public class VideoPlayerViewModel: ObservableObject {
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         
+        // Deactivate audio session
+        do {
+            try await AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            LoggingService.debug("Audio session deactivated", component: "Player")
+        } catch {
+            LoggingService.error("Failed to deactivate audio session: \(error)", component: "Player")
+        }
+        
         LoggingService.debug("Completed sync cleanup of player resources", component: "Player")
     }
     
@@ -304,7 +322,7 @@ public class VideoPlayerViewModel: ObservableObject {
     }
     
     public func loadVideo() async {
-        LoggingService.video("Starting loadVideo for \(video.id)", component: "Player")
+        LoggingService.video("🎬 Starting loadVideo for \(video.id)", component: "Player")
         isLoading = true
         loadingProgress = 0
         error = nil
@@ -315,6 +333,7 @@ public class VideoPlayerViewModel: ObservableObject {
             do {
                 try await setupPlayer(preloadedPlayer)
                 preloadedPlayers.removeValue(forKey: video.id)
+                LoggingService.video("✅ Successfully set up preloaded player for \(video.id)", component: "Player")
             } catch {
                 LoggingService.error("Failed to setup preloaded player: \(error.localizedDescription)", component: "Player")
                 self.error = "Failed to setup preloaded player: \(error.localizedDescription)"
@@ -702,26 +721,36 @@ public class VideoPlayerViewModel: ObservableObject {
     
     // MARK: - Enhanced Play Method
     public func play() async {
+        LoggingService.debug("▶️ Play requested for video \(video.id)", component: "Player")
+        
         // Initialize player if needed
         if player == nil || player?.currentItem == nil {
+            LoggingService.debug("Player is nil, loading video first for \(video.id)", component: "Player")
             await loadVideo()
         }
         
-        guard let player = player else { return }
+        guard let player = player else {
+            LoggingService.error("❌ Player still nil after loadVideo for \(video.id)", component: "Player")
+            return
+        }
         
         // Ensure volume is set to 1.0 initially
+        let previousVolume = player.volume
         player.volume = 1.0
+        LoggingService.debug("Initial volume set to 1.0 (was \(previousVolume)) for video \(video.id)", component: "Player")
         
         // Start playback
         player.play()
         isPlaying = true
         VideoPlayerViewModel.currentlyPlayingViewModel = self
+        LoggingService.debug("🎵 Playback started for video \(video.id)", component: "Player")
         
         // Cancel any existing fade tasks
         cancelFades()
         
         // Fade in audio
         do {
+            LoggingService.debug("Starting audio fade in for video \(video.id)", component: "Player")
             try await fadeInAudio()
         } catch {
             LoggingService.error("Error during audio fade: \(error)", component: "Player")
@@ -731,7 +760,7 @@ public class VideoPlayerViewModel: ObservableObject {
         do {
             try await incrementViewCount()
         } catch {
-            LoggingService.error("Failed to increment view count: \(error)", component: "PlayerVM")
+            LoggingService.error("Failed to increment view count: \(error)", component: "Player")
         }
     }
     
@@ -822,22 +851,27 @@ public class VideoPlayerViewModel: ObservableObject {
     
     private func fadeOutAudio() async {
         guard let player = player else { return }
+        LoggingService.debug("Starting fadeOutAudio for video \(video.id), initial volume: \(player.volume)", component: "Player")
         cancelFades()
         let steps = 5
         let time = 0.3
         let chunk = player.volume / Float(steps)
         fadeTask = Task {
-            for _ in 0..<steps {
+            for step in 0..<steps {
                 if Task.isCancelled { return }
                 try? await Task.sleep(nanoseconds: UInt64(time*1_000_000_000 / Double(steps)))
                 player.volume -= chunk
+                LoggingService.debug("FadeOut step \(step + 1)/\(steps), volume now: \(player.volume)", component: "Player")
             }
         }
         await fadeTask?.value
+        LoggingService.debug("FadeOut complete for video \(video.id), final volume: \(player.volume)", component: "Player")
     }
     
     private func fadeInAudio() async throws {
         guard let player = player else { return }
+        
+        LoggingService.debug("Starting fadeInAudio for video \(video.id), initial volume: \(player.volume)", component: "Player")
         
         // Start with volume at 0
         player.volume = 0
@@ -855,12 +889,14 @@ public class VideoPlayerViewModel: ObservableObject {
             for i in 0...steps {
                 if Task.isCancelled { return }
                 player.volume = Float(i) / Float(steps)
+                LoggingService.debug("FadeIn step \(i + 1)/\(steps), volume now: \(player.volume)", component: "Player")
                 try await Task.sleep(nanoseconds: UInt64(stepDuration * 1_000_000_000))
             }
             
             // Ensure we end at full volume
             if !Task.isCancelled {
                 player.volume = 1.0
+                LoggingService.debug("FadeIn complete, final volume set to 1.0", component: "Player")
             }
             
             LoggingService.debug("Audio fade complete for video \(video.id)", component: "Player")
